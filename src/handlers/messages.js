@@ -18,6 +18,9 @@ import { generate_response } from "../ai.js";
 
 // ═══ Helpers ═══════════════════════════════════════════════════
 
+// Recuerda la última clienta que mandó ubicación (para cotizar su envío sin escribir el número)
+let last_location_from = null;
+
 function format_history(rows) {
   return rows.map(r => ({
     role: r.direction === "in" ? "user" : "assistant",
@@ -108,13 +111,24 @@ function is_owner(phone) {
   return norm(phone) === norm(config.business.owner_phone);
 }
 
-// Detecta si un mensaje de Winny es un comando de confirmación de pago.
-// Devuelve {action, phone} o null (si null = es conversación normal, ej. Winny probando como clienta)
+// Detecta si un mensaje de Winny es un comando (confirmar/rechazar pago, o cotizar envío).
+// Devuelve {action, phone, amount} o null (si null = conversación normal, ej. Winny probando como clienta)
 function parse_owner_command(text) {
   const t = (text || "").trim().toLowerCase();
   if (!t) return null;
-  const m = t.match(/\+?(\d[\d\s-]{7,}\d)/);          // número del cliente si lo incluye
-  const phone = m ? m[1].replace(/\D/g, "") : null;
+
+  // Número del cliente si lo incluye (secuencia de 9+ dígitos; NO confundir con el precio)
+  const phoneMatch = t.match(/\+?(\d[\d\s-]{7,}\d)/);
+  const phone = phoneMatch ? phoneMatch[1].replace(/\D/g, "") : null;
+
+  // Comando de ENVÍO: "envio 250", "envío +1809... 250", "el envio es 250"
+  if (/env[ií]o/.test(t)) {
+    const rest = phoneMatch ? t.replace(phoneMatch[0], " ") : t; // quitar el teléfono para no tomarlo como precio
+    const amtMatch = rest.match(/(\d{1,6})/);
+    const amount = amtMatch ? parseInt(amtMatch[1], 10) : null;
+    if (amount != null) return { action: "shipping", phone, amount };
+  }
+
   const isConfirm = /^(confirmar|confirmo|confirmado|aprobar|aprobado)\b/.test(t)
     || /^pago\s+(confirmado|ok|llego|lleg[oó])/.test(t)
     || t === "ok" || t === "llego" || t === "llegó" || t === "ya llegó" || t === "ya llego";
@@ -132,7 +146,29 @@ async function handle_owner_command(parsed) {
 
   const owner = config.business.owner_phone;
 
-  // ¿A qué cliente/pedido aplica?
+  // ─── Cotizar ENVÍO a una clienta ───
+  if (cmd.action === "shipping") {
+    const targetPhone = cmd.phone || last_location_from;
+    if (!targetPhone) {
+      await send_text(owner,
+        "No sé a cuál clienta cotizarle el envío mi reina 💕\n" +
+        "Mándame: *envio +1809XXXXXXX 250* (su número y el precio).");
+      return true;
+    }
+    // Guardar el costo del envío en el pedido activo (si hay) para la factura
+    const order = get_active_order(targetPhone) || get_pending_verification(targetPhone);
+    if (order) {
+      const prevNotes = order.notes ? `${order.notes} | ` : "";
+      update_order(order.id, { notes: `${prevNotes}Envío: RD$${cmd.amount}` });
+    }
+    await send_text(targetPhone,
+      `El envío a tu zona es de *RD$${cmd.amount}* mi amor 💕\nEste costo se suma a tu pedido. ¿Confirmas para coordinar el pago? ✨`);
+    await send_text(owner,
+      `✅ Le dije a la clienta (+${targetPhone}) que su envío es RD$${cmd.amount} 💕`);
+    return true;
+  }
+
+  // ─── Confirmar / rechazar PAGO ───
   let targetPhone = cmd.phone;
   let order = targetPhone ? get_pending_verification(targetPhone) : get_latest_pending_verification();
   if (!targetPhone && order) targetPhone = order.phone;
@@ -289,12 +325,14 @@ export async function handle_incoming(parsed, contact_profile) {
       break;
     case "location": {
       await send_text(from, "¡Gracias por tu ubicación mi amor! 📍 Winny te confirma el costo del envío según tu zona en breve 💕");
+      last_location_from = from; // recordar para cotizar con "envio <precio>"
       const maps = `https://maps.google.com/?q=${parsed.latitude},${parsed.longitude}`;
       await send_text(config.business.owner_phone,
         `📍 *Ubicación para envío (Santo Domingo)*\n` +
         `📱 Cliente: +${from}${contact.name ? ` (${contact.name})` : ""}\n` +
         `🗺️ Ver zona: ${maps}\n\n` +
-        `Confírmale a la clienta el costo del envío según su zona 💕`);
+        `Para decirle el costo del envío respóndeme:\n*envio 250*  (el precio para su zona)\n` +
+        `o  *envio +${from} 250*`);
       break;
     }
     default:
