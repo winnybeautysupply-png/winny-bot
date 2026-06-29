@@ -1,0 +1,26 @@
+{
+  "name": "winny-beauty-whatsapp-bot",
+  "version": "1.0.0",
+  "description": "Bot inteligente de WhatsApp para Winny Beauty Supply (RD) — usa Claude AI para responder en español dominicano, toma pedidos, recibe comprobantes de pago y escala a humano cuando es necesario",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "init-db": "node src/scripts/init-db.js",
+    "test-claude": "node src/scripts/test-claude.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.30.0",
+    "better-sqlite3": "^11.5.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "pino": "^9.5.0"
+  },
+  "author": "Winny Mercedes Nuñez (Winny Beauty Supply)",
+  "license": "UNLICENSED",
+  "private": true
+}

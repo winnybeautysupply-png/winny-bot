@@ -1,0 +1,52 @@
+# ═══════════════════════════════════════════════════════════════
+# Render.com — config para auto-deploy
+# Subes este repo a GitHub, conectas a Render, y se despliega solo.
+# ═══════════════════════════════════════════════════════════════
+services:
+  - type: web
+    name: winny-beauty-bot
+    runtime: node
+    plan: starter  # $7/mes — tier gratis no sirve porque duerme tras 15 min de inactividad
+    region: oregon  # más cerca de RD que Frankfurt
+    branch: main
+    buildCommand: npm install
+    startCommand: node src/index.js
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: TWILIO_ACCOUNT_SID
+        sync: false  # secreto — se pone manualmente en dashboard
+      - key: TWILIO_API_KEY_SID
+        sync: false  # secreto
+      - key: TWILIO_API_KEY_SECRET
+        sync: false  # secreto
+      - key: TWILIO_WHATSAPP_NUMBER
+        value: "+18492489801"
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: CLAUDE_MODEL
+        value: claude-sonnet-4-6
+      - key: OWNER_PHONE
+        value: "18293839433"
+      - key: BUSINESS_NAME
+        value: Winny Beauty Supply
+      - key: TZ
+        value: America/Santo_Domingo
+      - key: BUSINESS_HOURS_START
+        value: "9"
+      - key: BUSINESS_HOURS_END
+        value: "19"
+      - key: BUSINESS_DAYS
+        value: "1,2,3,4,5,6"
+      - key: BANK_ACCOUNTS
+        sync: false
+      - key: LOG_LEVEL
+        value: info
+    disk:
+      name: winny-data
+      mountPath: /app/data
+      sizeGB: 1
