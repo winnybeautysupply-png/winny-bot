@@ -70,7 +70,8 @@ export const config = {
 
   // DB y storage
   db_path: optional("DB_PATH", "./data/winny-bot.db"),
-  receipts_dir: optional("RECEIPTS_DIR", "./data/comprobantes")
+  receipts_dir: optional("RECEIPTS_DIR", "./data/comprobantes"),
+  invoices_dir: optional("INVOICES_DIR", "./data/facturas")
 };
 
 // Helper: ¿está abierto el negocio ahora?

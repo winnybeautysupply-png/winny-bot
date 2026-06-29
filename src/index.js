@@ -21,6 +21,9 @@ app.use(express.json({ limit: "5mb" }));
 // Servir los comprobantes de pago como URL pública (para reenviarlos a Winny)
 app.use("/comprobantes", express.static(config.receipts_dir));
 
+// Servir las facturas PDF como URL pública (para enviarlas por WhatsApp)
+app.use("/facturas", express.static(config.invoices_dir));
+
 // ─── Health & landing ────────────────────────────────────────────
 app.get("/", (_req, res) => {
   res.send(`
@@ -41,6 +44,29 @@ app.get("/health", (_req, res) => {
     business: config.business.name,
     is_open: is_business_open()
   });
+});
+
+// ─── Ruta TEMPORAL de prueba de factura (quitar después de verificar) ─
+import { generate_invoice } from "./invoice.js";
+app.get("/factura-demo", async (_req, res) => {
+  try {
+    const demo = {
+      id: 999,
+      phone: "18095551234",
+      customer_name: "María Pérez (DEMO)",
+      delivery_address: "Calle Duarte #45, Los Mina, Santo Domingo Este",
+      total: 5250,
+      items: JSON.stringify([
+        { nombre: "Cabello Brasileño", detalles: "20 pulgadas, color natural", cantidad: 2, precio_unitario_rd: 2350 },
+        { nombre: "Set de brochas JOS", detalles: "rhinestone", cantidad: 1, precio_unitario_rd: 1990 }
+      ])
+    };
+    const { filename } = await generate_invoice(demo);
+    res.redirect(`/facturas/${filename}`);
+  } catch (err) {
+    logger.error({ err: err.message, stack: err.stack }, "Error en factura-demo");
+    res.status(500).send("Error generando factura demo: " + err.message);
+  }
 });
 
 // ─── Webhook receiver (POST) — Twilio ────────────────────────────

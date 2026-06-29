@@ -16,6 +16,7 @@ import {
 } from "../db.js";
 import { generate_response } from "../ai.js";
 import { append_order_row } from "../sheets.js";
+import { generate_invoice } from "../invoice.js";
 
 // ═══ Helpers ═══════════════════════════════════════════════════
 
@@ -214,9 +215,28 @@ async function handle_owner_command(parsed) {
     if (order) update_order(order.id, { status: "paid" });
     await send_text(targetPhone,
       "¡Tu pago fue confirmado mi amor! 💕✨\nYa preparamos tu pedido y te lo enviamos. ¡Gracias por tu compra! 🛍️");
+
+    // Generar la FACTURA PDF y enviarla a la clienta y a Winny (para empacar)
+    let facturaOk = false;
+    if (order) {
+      try {
+        const { filename } = await generate_invoice(order);
+        const factura_url = `${config.public_base_url}/facturas/${filename}`;
+        await send_image(targetPhone, factura_url,
+          `🧾 Aquí está la factura de tu pedido #${order.id}, mi amor 💕`);
+        await send_image(owner, factura_url,
+          `🧾 *Factura del pedido #${order.id}*${order.customer_name ? ` — ${order.customer_name}` : ""}\nPara que el empacador prepare el pedido 📦`);
+        facturaOk = true;
+      } catch (err) {
+        logger.error({ err: err.message, order_id: order.id }, "Error generando/enviando factura");
+      }
+    }
+
     await send_text(owner,
       `✅ Pago confirmado${order?.customer_name ? ` de *${order.customer_name}*` : ""} (+${targetPhone}).\n` +
-      `Ya le avisé a la clienta que su pedido va en camino 💕`);
+      `Ya le avisé a la clienta que su pedido va en camino 💕` +
+      (facturaOk ? `\n🧾 Le mandé la factura a la clienta y a ti.` :
+        (order ? `\n⚠️ No pude generar la factura (revisa el log).` : "")));
   } else {
     if (order) update_order(order.id, { status: "payment_rejected" });
     await send_text(targetPhone,
