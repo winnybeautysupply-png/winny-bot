@@ -238,37 +238,53 @@ async function handle_owner_command(parsed) {
 
   if (cmd.action === "confirm") {
     if (order) update_order(order.id, { status: "paid" });
-    await send_text(targetPhone,
-      "¡Tu pago fue confirmado mi amor! 💕✨\nYa preparamos tu pedido y te lo enviamos. ¡Gracias por tu compra! 🛍️");
 
-    // Generar la FACTURA PDF y enviarla a la clienta y a Winny (para empacar)
-    let facturaOk = false;
+    // 1) PRIMERO confirmar a la clienta — esto SIEMPRE sale, pase lo que pase con la factura.
+    await send_text(targetPhone,
+      "¡Tu pago fue confirmado mi amor! 💕✨\nYa preparamos tu pedido y te lo enviamos enseguida. ¡Gracias por tu compra! 🛍️");
+
+    // 2) Generar la factura una sola vez y enviarla por separado a la clienta y a Winny
+    //    (cada envío independiente: si falla uno, el otro igual sale).
+    let facturaUrl = null;
     if (order) {
       try {
         const { filename } = await generate_invoice(order);
-        const factura_url = `${config.public_base_url}/facturas/${filename}`;
-        await send_image(targetPhone, factura_url,
-          `🧾 Aquí está la factura de tu pedido #${order.id}, mi amor 💕`);
-        await send_image(owner, factura_url,
-          `🧾 *Factura del pedido #${order.id}*${order.customer_name ? ` — ${order.customer_name}` : ""}\nPara que el empacador prepare el pedido 📦`);
-        facturaOk = true;
+        facturaUrl = `${config.public_base_url}/facturas/${filename}`;
       } catch (err) {
-        logger.error({ err: err.message, order_id: order.id }, "Error generando/enviando factura");
+        logger.error({ err: err.message, order_id: order.id }, "Error generando factura");
       }
     }
+    let factClienteOk = false, factWinnyOk = false;
+    if (facturaUrl) {
+      try {
+        const sid = await send_image(targetPhone, facturaUrl,
+          `🧾 Aquí está la factura de tu pedido #${order.id}, mi amor 💕`);
+        factClienteOk = !!sid;
+      } catch (err) { logger.error({ err: err.message }, "Error enviando factura a la clienta"); }
+      try {
+        const sid = await send_image(owner, facturaUrl,
+          `🧾 *Factura del pedido #${order.id}*${order.customer_name ? ` — ${order.customer_name}` : ""}\nPara que el empacador prepare el pedido 📦`);
+        factWinnyOk = !!sid;
+      } catch (err) { logger.error({ err: err.message }, "Error enviando factura a Winny"); }
+    }
 
+    // 3) Resumen claro para Winny de qué pasó
+    let nota;
+    if (!order) nota = "\n⚠️ No había un pedido registrado, así que no pude hacer la factura automática. Si quieres, la haces a mano.";
+    else if (factClienteOk) nota = `\n🧾 Le mandé la factura a la clienta${factWinnyOk ? " y a ti." : " (a ti no te llegó, revisa)."}`;
+    else nota = "\n⚠️ El pago quedó confirmado pero no pude enviarle la factura a la clienta (revisa el log).";
     await send_text(owner,
-      `✅ Pago confirmado${order?.customer_name ? ` de *${order.customer_name}*` : ""} (+${targetPhone}).\n` +
-      `Ya le avisé a la clienta que su pedido va en camino 💕` +
-      (facturaOk ? `\n🧾 Le mandé la factura a la clienta y a ti.` :
-        (order ? `\n⚠️ No pude generar la factura (revisa el log).` : "")));
+      `✅ Pago confirmado${order?.customer_name ? ` de *${order.customer_name}*` : ""} (+${targetPhone}). Ya le avisé que su pedido va en camino 💕` + nota);
   } else {
     if (order) update_order(order.id, { status: "payment_rejected" });
     await send_text(targetPhone,
-      "Mi amor, todavía no nos ha llegado tu pago 😅\n¿Puedes verificar la transferencia o mandarme el comprobante de nuevo? Apenas confirmemos te enviamos tu pedido 💕");
+      "Mi amor, revisé y tu pago todavía NO nos ha llegado 😅\nPor favor revisa tu transferencia y confírmame, o mándame el comprobante de nuevo. Apenas entre el pago, preparo tu pedido y te lo envío 💕");
     await send_text(owner,
-      `❌ Le avisé a la clienta (+${targetPhone}) que el pago aún no ha llegado.`);
+      `❌ Le avisé a la clienta (+${targetPhone}) que su pago aún no ha llegado y que lo revise.`);
   }
+
+  // Limpiar para no re-confirmar/re-rechazar a la misma clienta con un "ok" o "no" suelto después.
+  last_comprobante_from = null;
   return true;
 }
 
