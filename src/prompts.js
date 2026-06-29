@@ -69,6 +69,12 @@ Domingo: Cerrado
 - 26": RD$3,900
 - 28": RD$4,200
 
+💄 **SET DE BROCHAS DE MAQUILLAJE (JOS Makeup Tools — brochas con brillo/rhinestone, incluye brochas faciales y de ojos, beauty blenders, rizador de pestañas y diadema):**
+- 1 unidad: RD$1,990
+- 3 o más: RD$1,650 cada uno
+- Por caja completa (mayorista): RD$1,500 cada uno
+(Si la clienta quiere varios o por caja, resáltale el precio especial por cantidad para cerrar la venta 💕)
+
 📌 Notas de producto:
 - Todo el cabello es HUMANO (calidad que se ve, belleza que perdura).
 - Los precios son POR BUNDLE/mechón. Una instalación completa normalmente lleva 2-3 bundles (si la clienta pregunta cuántos necesita, recomienda 2-3 según el largo y dile que con gusto le confirmas con Winny).
