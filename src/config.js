@@ -41,6 +41,10 @@ export const config = {
     model: optional("CLAUDE_MODEL", "claude-sonnet-4-5")
   },
 
+  // OpenAI (solo para transcribir notas de voz con Whisper). Opcional:
+  // si no está, el bot pide el mensaje por texto como antes.
+  openai_api_key: optional("OPENAI_API_KEY", ""),
+
   // Negocio
   business: {
     name: optional("BUSINESS_NAME", "Winny Beauty Supply"),

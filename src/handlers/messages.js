@@ -17,6 +17,7 @@ import {
 import { generate_response, extract_order_from_chat, generate_owner_response } from "../ai.js";
 import { append_order_row } from "../sheets.js";
 import { generate_invoice } from "../invoice.js";
+import { transcribe_audio, transcription_enabled } from "../transcribe.js";
 
 // ═══ Helpers ═══════════════════════════════════════════════════
 
@@ -122,6 +123,53 @@ async function handle_image(parsed, contact) {
       reason: "Comprobante recibido — error al reenviar imagen: " + save_to,
       urgency: "alta"
     });
+  }
+}
+
+// ═══ Handler de AUDIO (nota de voz) — transcribe y procesa ══════
+
+async function handle_audio(parsed, contact) {
+  const { from, media_url, mime } = parsed;
+
+  // Si no hay transcripción configurada (sin OPENAI_API_KEY): comportamiento anterior.
+  if (!transcription_enabled()) {
+    await send_text(from,
+      "Recibí tu audio mi amor 💕 Por ahora prefiero leer mensajes de texto, ¿me lo puedes escribir? O si prefieres hablar con Winny dime y le aviso ✨");
+    set_handoff(from, 30);
+    await notify_winny({
+      from, contact_name: contact.name,
+      reason: "Cliente envió audio — transcripción no configurada",
+      urgency: "baja"
+    });
+    return;
+  }
+
+  // Descargar la nota de voz y transcribirla
+  const ext = (mime?.split("/")[1] || "ogg").split(";")[0];
+  const save_to = path.join(config.receipts_dir, "audios", `${from}-${Date.now()}.${ext}`);
+  const dl = await download_media(media_url, save_to);
+  if (!dl) {
+    await send_text(from, "Ay mi amor, no me llegó bien tu nota de voz 😅 ¿Me la mandas otra vez o me la escribes?");
+    return;
+  }
+
+  const text = await transcribe_audio(save_to, mime);
+  if (!text) {
+    await send_text(from, "Mi amor, no pude entender bien tu nota de voz 😅 ¿Me la escribes o me la mandas de nuevo, por favor?");
+    return;
+  }
+  logger.info({ from, text_preview: text.slice(0, 50) }, "🎤 Audio transcrito");
+
+  // Guardar la transcripción como mensaje de texto (para el historial/contexto)
+  save_message({ phone: from, direction: "in", type: "text", content: text, wa_message_id: `${parsed.id}-tx` });
+
+  // Procesarlo como si la clienta lo hubiera ESCRITO
+  const p = { ...parsed, type: "text", text };
+  if (is_owner(from)) {
+    const handled = await handle_owner_command(p);
+    if (!handled) await handle_owner_chat(p);
+  } else {
+    await handle_text(p, contact);
   }
 }
 
@@ -496,14 +544,7 @@ export async function handle_incoming(parsed, contact_profile) {
       await handle_image(parsed, contact);
       break;
     case "audio":
-      // Por ahora solo notificamos; futuro: transcribir con Whisper
-      await send_text(from, "Recibí tu audio mi amor 💕 Por ahora prefiero leer mensajes de texto, ¿me lo puedes escribir? O si prefieres hablar con Winny dime y le aviso ✨");
-      set_handoff(from, 30);
-      await notify_winny({
-        from, contact_name: contact.name,
-        reason: "Cliente envió audio — bot no procesa audio",
-        urgency: "baja"
-      });
+      await handle_audio(parsed, contact);
       break;
     case "location": {
       await send_text(from, "¡Gracias por tu ubicación mi amor! 📍 Winny te confirma el costo del envío según tu zona en breve 💕");
