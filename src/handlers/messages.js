@@ -11,7 +11,8 @@ import {
 import {
   upsert_contact, save_message, get_recent_messages,
   set_handoff, is_handed_off,
-  get_active_order, create_order, update_order
+  get_active_order, create_order, update_order,
+  get_pending_verification, get_latest_pending_verification
 } from "../db.js";
 import { generate_response } from "../ai.js";
 
@@ -73,35 +74,91 @@ async function handle_image(parsed, contact) {
     media_path: save_to, wa_message_id: parsed.id
   });
 
-  // Confirmar al cliente
+  // Confirmar al cliente (sin prometer que ya va en camino — falta que Winny confirme el pago)
   await send_text(from,
-    `¡Recibí tu comprobante mi amor! 💕✨\n\nWinny lo verifica y te confirmamos el pago en breve. ` +
-    `Mientras tanto vamos preparando tu pedido 🛍️`);
+    `¡Recibí tu comprobante mi amor! 💕✨\n\nWinny verifica que el pago haya llegado y te confirmamos enseguida para preparar tu pedido 🛍️`);
 
-  // Reenviar a Winny
+  // Reenviar el comprobante (la FOTO) a Winny vía URL pública, con instrucciones para confirmar
   try {
-    const media_id_uploaded = await upload_media(save_to, mime || "image/jpeg");
-    if (media_id_uploaded) {
-      await send_image(
-        config.business.owner_phone,
-        media_id_uploaded,
-        `💰 *Comprobante de pago recibido*\n\n📱 De: +${from}${contact?.name ? ` (${contact.name})` : ""}\n${order ? `🧾 Pedido #${order.id}` : ""}\n\nVerifica y confírmale al cliente 💕`
-      );
-    } else {
-      await notify_winny({
-        from, contact_name: contact?.name,
-        reason: "Llegó comprobante de pago — revisa en " + save_to,
-        urgency: "alta"
-      });
-    }
+    const public_url = `${config.public_base_url}/comprobantes/${filename}`;
+    const hint =
+      `\n\n¿Llegó el pago, reina? 👇\n` +
+      `✅ Si LLEGÓ, respóndeme:  *confirmar +${from}*\n` +
+      `❌ Si NO llegó:  *rechazar +${from}*\n\n` +
+      `(También puedes responder solo *confirmar* para confirmar este último.)`;
+    await send_image(
+      config.business.owner_phone,
+      public_url,
+      `💰 *Comprobante de pago recibido*\n📱 Cliente: +${from}${contact?.name ? ` (${contact.name})` : ""}${order ? `\n🧾 Pedido #${order.id}` : ""}${hint}`
+    );
   } catch (err) {
     logger.error({ err: err.message }, "Error reenviando comprobante");
     await notify_winny({
       from, contact_name: contact?.name,
-      reason: "Comprobante recibido — error al reenviar, revisar manualmente: " + save_to,
+      reason: "Comprobante recibido — error al reenviar imagen: " + save_to,
       urgency: "alta"
     });
   }
+}
+
+// ═══ COMANDOS DE WINNY (la dueña) — confirmar/rechazar pagos ════
+
+function is_owner(phone) {
+  const norm = (s) => (s || "").replace(/\D/g, "");
+  return norm(phone) === norm(config.business.owner_phone);
+}
+
+// Detecta si un mensaje de Winny es un comando de confirmación de pago.
+// Devuelve {action, phone} o null (si null = es conversación normal, ej. Winny probando como clienta)
+function parse_owner_command(text) {
+  const t = (text || "").trim().toLowerCase();
+  if (!t) return null;
+  const m = t.match(/\+?(\d[\d\s-]{7,}\d)/);          // número del cliente si lo incluye
+  const phone = m ? m[1].replace(/\D/g, "") : null;
+  const isConfirm = /^(confirmar|confirmo|confirmado|aprobar|aprobado)\b/.test(t)
+    || /^pago\s+(confirmado|ok|llego|lleg[oó])/.test(t)
+    || t === "ok" || t === "llego" || t === "llegó" || t === "ya llegó" || t === "ya llego";
+  const isReject = /^(rechazar|rechazado|cancelar)\b/.test(t)
+    || /^pago\s+(rechazado|no)/.test(t)
+    || /^no\s+(lleg|ha llegado)/.test(t);
+  if (isConfirm) return { action: "confirm", phone };
+  if (isReject) return { action: "reject", phone };
+  return null;
+}
+
+async function handle_owner_command(parsed) {
+  const cmd = parse_owner_command(parsed.text);
+  if (!cmd) return false; // no es comando → que siga el flujo normal de conversación
+
+  const owner = config.business.owner_phone;
+
+  // ¿A qué cliente/pedido aplica?
+  let targetPhone = cmd.phone;
+  let order = targetPhone ? get_pending_verification(targetPhone) : get_latest_pending_verification();
+  if (!targetPhone && order) targetPhone = order.phone;
+
+  if (!targetPhone) {
+    await send_text(owner,
+      "No tengo ningún pago pendiente de confirmar ahora mismo mi reina 💕\n" +
+      "Si quieres confirmar uno, mándame: *confirmar +1809XXXXXXX* (el número del cliente).");
+    return true;
+  }
+
+  if (cmd.action === "confirm") {
+    if (order) update_order(order.id, { status: "paid" });
+    await send_text(targetPhone,
+      "¡Tu pago fue confirmado mi amor! 💕✨\nYa preparamos tu pedido y te lo enviamos. ¡Gracias por tu compra! 🛍️");
+    await send_text(owner,
+      `✅ Pago confirmado${order?.customer_name ? ` de *${order.customer_name}*` : ""} (+${targetPhone}).\n` +
+      `Ya le avisé a la clienta que su pedido va en camino 💕`);
+  } else {
+    if (order) update_order(order.id, { status: "payment_rejected" });
+    await send_text(targetPhone,
+      "Mi amor, todavía no nos ha llegado tu pago 😅\n¿Puedes verificar la transferencia o mandarme el comprobante de nuevo? Apenas confirmemos te enviamos tu pedido 💕");
+    await send_text(owner,
+      `❌ Le avisé a la clienta (+${targetPhone}) que el pago aún no ha llegado.`);
+  }
+  return true;
 }
 
 // ═══ Handler de TEXTO (lo más común) ═══════════════════════════
@@ -197,6 +254,18 @@ export async function handle_incoming(parsed, contact_profile) {
   try {
     await mark_read(id);
   } catch (e) { /* no critical */ }
+
+  // ¿Es Winny (la dueña) mandando un comando de confirmación/rechazo de pago?
+  // Si el texto parece comando, lo procesamos; si no, sigue como conversación normal
+  // (así Winny también puede probar el bot como si fuera una clienta).
+  if (is_owner(from) && (type === "text" || type === "interactive" || type === "button")) {
+    try {
+      const handled = await handle_owner_command(parsed);
+      if (handled) return;
+    } catch (err) {
+      logger.error({ err: err.message, from }, "Error en comando de Winny");
+    }
+  }
 
   // Despachar según tipo
   switch (type) {

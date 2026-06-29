@@ -142,4 +142,23 @@ export function get_order(id) {
   return db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
 }
 
+// Pedido de un cliente esperando que Winny verifique el pago
+export function get_pending_verification(phone) {
+  return db.prepare(`
+    SELECT * FROM orders
+    WHERE phone = ? AND status = 'awaiting_verification'
+    ORDER BY updated_at DESC LIMIT 1
+  `).get(phone);
+}
+
+// El comprobante más reciente (de cualquier cliente) esperando verificación
+export function get_latest_pending_verification() {
+  return db.prepare(`
+    SELECT o.*, c.name AS contact_name FROM orders o
+    LEFT JOIN contacts c ON c.phone = o.phone
+    WHERE o.status = 'awaiting_verification'
+    ORDER BY o.updated_at DESC LIMIT 1
+  `).get();
+}
+
 export default db;

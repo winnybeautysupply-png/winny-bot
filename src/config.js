@@ -56,6 +56,9 @@ export const config = {
   port: parseInt(optional("PORT", "3000"), 10),
   log_level: optional("LOG_LEVEL", "info"),
 
+  // URL pública del bot (para servir comprobantes a Winny)
+  public_base_url: optional("PUBLIC_BASE_URL", "https://winny-bot.onrender.com"),
+
   // DB y storage
   db_path: optional("DB_PATH", "./data/winny-bot.db"),
   receipts_dir: optional("RECEIPTS_DIR", "./data/comprobantes")

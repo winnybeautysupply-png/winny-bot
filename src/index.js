@@ -18,6 +18,9 @@ const app = express();
 app.use(express.urlencoded({ extended: false, limit: "5mb" }));
 app.use(express.json({ limit: "5mb" }));
 
+// Servir los comprobantes de pago como URL pública (para reenviarlos a Winny)
+app.use("/comprobantes", express.static(config.receipts_dir));
+
 // ─── Health & landing ────────────────────────────────────────────
 app.get("/", (_req, res) => {
   res.send(`
