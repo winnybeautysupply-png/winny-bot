@@ -23,6 +23,9 @@ import { generate_invoice } from "../invoice.js";
 // Recuerda la última clienta que mandó ubicación (para cotizar su envío sin escribir el número)
 let last_location_from = null;
 
+// Recuerda la última clienta cuyo comprobante se le reenvió a Winny (para confirmar/rechazar sin escribir el número)
+let last_comprobante_from = null;
+
 // Formatea un número con separador de miles (ej: 2350 -> "2,350")
 function rd(n) { return Number(n || 0).toLocaleString("en-US"); }
 
@@ -83,6 +86,8 @@ async function handle_image(parsed, contact) {
   if (order) {
     update_order(order.id, { receipt_path: save_to, status: "awaiting_verification" });
   }
+  // Recordar esta clienta para que Winny pueda confirmar/rechazar con solo "llegó"/"no llegó"
+  last_comprobante_from = from;
 
   save_message({
     phone: from, direction: "in", type: "image",
@@ -142,14 +147,27 @@ function parse_owner_command(text) {
     if (amount != null) return { action: "shipping", phone, amount };
   }
 
-  const isConfirm = /^(confirmar|confirmo|confirmado|aprobar|aprobado)\b/.test(t)
-    || /^pago\s+(confirmado|ok|llego|lleg[oó])/.test(t)
-    || t === "ok" || t === "llego" || t === "llegó" || t === "ya llegó" || t === "ya llego";
-  const isReject = /^(rechazar|rechazado|cancelar)\b/.test(t)
-    || /^pago\s+(rechazado|no)/.test(t)
-    || /^no\s+(lleg|ha llegado)/.test(t);
-  if (isConfirm) return { action: "confirm", phone };
+  // ── Confirmar / rechazar pago — Winny escribe natural, en dominicano ──
+  // OJO: chequear RECHAZO PRIMERO, porque "no llegó" contiene "llegó".
+  const isReject =
+    /\b(rechaz|cancel|falso|fake)/.test(t) ||
+    /\bno\s+(\w+\s+){0,2}(lleg|entr|recib|aparec|cay|dep[oó]sit|acredit|pag)/.test(t) ||
+    /\b(todav[ií]a|a[uú]n)\s+no\b/.test(t);
   if (isReject) return { action: "reject", phone };
+
+  const isConfirm =
+    /\b(confirm|aprob|acredit|verificad)/.test(t) ||
+    /\b(lleg[oó]|entr[oó]|recib|cay[oó]|dep[oó]sit|pag[oó])/.test(t) ||
+    /\b(ya\s+est[aá]|todo\s+bien|correcto)\b/.test(t);
+  if (isConfirm) return { action: "confirm", phone };
+
+  // Señales DÉBILES (sí / ok / dale / no a secas): solo cuentan si hay un
+  // comprobante pendiente. Si no hay nada pendiente, se trata como charla normal.
+  if (/^(s[ií]+|ok|okay|dale|listo|perfecto|de una|hecho)\b/.test(t))
+    return { action: "confirm", phone, weak: true };
+  if (/^(no|nop|negativo)\b/.test(t))
+    return { action: "reject", phone, weak: true };
+
   return null;
 }
 
@@ -203,8 +221,15 @@ async function handle_owner_command(parsed) {
   let targetPhone = cmd.phone;
   let order = targetPhone ? get_pending_verification(targetPhone) : get_latest_pending_verification();
   if (!targetPhone && order) targetPhone = order.phone;
+  // Respaldo: la última clienta cuyo comprobante se le reenvió a Winny
+  if (!targetPhone && last_comprobante_from) {
+    targetPhone = last_comprobante_from;
+    order = order || get_pending_verification(targetPhone);
+  }
 
   if (!targetPhone) {
+    // Señal débil (sí/ok/no a secas) sin nada pendiente → no es comando: charla normal.
+    if (cmd.weak) return false;
     await send_text(owner,
       "No tengo ningún pago pendiente de confirmar ahora mismo mi reina 💕\n" +
       "Si quieres confirmar uno, mándame: *confirmar +1809XXXXXXX* (el número del cliente).");
