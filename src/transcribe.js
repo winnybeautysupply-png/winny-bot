@@ -1,47 +1,87 @@
 // ═══════════════════════════════════════════════════════════════
-// Transcripción de notas de voz — usa Whisper de OpenAI.
-// Las clientas dominicanas aman mandar audios; esto los convierte a
-// texto para que el bot las atienda igual que un mensaje escrito.
+// Transcripción de notas de voz — usa Google Cloud Speech-to-Text.
+// Reusa la MISMA cuenta de servicio de Google Sheets (no necesita key
+// nueva): GOOGLE_SERVICE_ACCOUNT_EMAIL + GOOGLE_PRIVATE_KEY.
 //
-// Requiere la variable de entorno OPENAI_API_KEY. Si no está, el bot
-// usa el comportamiento anterior (pedir el mensaje por texto).
+// Requiere en el proyecto de Google Cloud:
+//   - API "Cloud Speech-to-Text" habilitada
+//   - Facturación (billing) habilitada
+//   - La cuenta de servicio con permiso para consumir el API
+// Si algo falta, la transcripción devuelve null y el bot pide el texto.
 // ═══════════════════════════════════════════════════════════════
 import fs from "fs";
+import { google } from "googleapis";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
 
-// ¿Está configurada la transcripción?
-export function transcription_enabled() {
-  return !!config.openai_api_key;
+let _auth = null;
+function get_auth() {
+  if (_auth) return _auth;
+  if (!config.sheets.service_account_email || !config.sheets.private_key) return null;
+  _auth = new google.auth.JWT(
+    config.sheets.service_account_email,
+    null,
+    config.sheets.private_key,
+    ["https://www.googleapis.com/auth/cloud-platform"]
+  );
+  return _auth;
 }
 
-// Transcribe un archivo de audio a texto (español). Devuelve el texto o null.
-export async function transcribe_audio(file_path, mime = "audio/ogg") {
-  if (!config.openai_api_key) return null;
-  try {
-    const data = fs.readFileSync(file_path);
-    const ext = (mime.split("/")[1] || "ogg").split(";")[0]; // ej: ogg, mpeg, mp4
-    const form = new FormData();
-    form.append("file", new Blob([data], { type: mime }), `audio.${ext}`);
-    form.append("model", "whisper-1");
-    form.append("language", "es"); // español (incluye dominicano)
+// ¿Hay credenciales de Google para intentar transcribir?
+export function transcription_enabled() {
+  return !!(config.sheets.service_account_email && config.sheets.private_key);
+}
 
-    const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+// Mapea el mime de Twilio al encoding de Google Speech-to-Text.
+function pick_encoding(mime) {
+  const m = (mime || "").toLowerCase();
+  if (m.includes("ogg") || m.includes("opus")) return "OGG_OPUS";
+  if (m.includes("amr-wb")) return "AMR_WB";
+  if (m.includes("amr")) return "AMR";
+  if (m.includes("mpeg") || m.includes("mp3")) return "MP3";
+  if (m.includes("wav") || m.includes("x-wav")) return "LINEAR16";
+  if (m.includes("flac")) return "FLAC";
+  return null; // dejar que Google intente detectar
+}
+
+// Transcribe un archivo de audio a texto (español dominicano). null si falla.
+export async function transcribe_audio(file_path, mime = "audio/ogg") {
+  const auth = get_auth();
+  if (!auth) return null;
+  try {
+    const tokenResp = await auth.getAccessToken();
+    const token = tokenResp?.token || tokenResp;
+    if (!token) { logger.error("No se obtuvo token de Google para STT"); return null; }
+
+    const audioBytes = fs.readFileSync(file_path).toString("base64");
+    const encoding = pick_encoding(mime);
+
+    const recognitionConfig = {
+      languageCode: "es-DO", // español de República Dominicana
+      alternativeLanguageCodes: ["es-US", "es-419"],
+      enableAutomaticPunctuation: true
+    };
+    if (encoding) recognitionConfig.encoding = encoding; // OGG_OPUS lleva el sample rate en el header
+
+    const res = await fetch("https://speech.googleapis.com/v1/speech:recognize", {
       method: "POST",
-      headers: { Authorization: `Bearer ${config.openai_api_key}` },
-      body: form
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ config: recognitionConfig, audio: { content: audioBytes } })
     });
 
     if (!res.ok) {
-      const errText = await res.text();
-      logger.error({ status: res.status, errText: errText.slice(0, 300) }, "Error transcribiendo audio (Whisper)");
+      const t = await res.text();
+      logger.error({ status: res.status, body: t.slice(0, 400) }, "Error Google Speech-to-Text");
       return null;
     }
     const json = await res.json();
-    const text = (json.text || "").trim();
+    const text = (json.results || [])
+      .map(r => r.alternatives?.[0]?.transcript || "")
+      .join(" ")
+      .trim();
     return text || null;
   } catch (err) {
-    logger.error({ err: err.message }, "Excepción transcribiendo audio");
+    logger.error({ err: err.message }, "Excepción transcribiendo audio (Google)");
     return null;
   }
 }
