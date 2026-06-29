@@ -46,29 +46,6 @@ app.get("/health", (_req, res) => {
   });
 });
 
-// ─── Ruta TEMPORAL de prueba de factura (quitar después de verificar) ─
-import { generate_invoice } from "./invoice.js";
-app.get("/factura-demo", async (_req, res) => {
-  try {
-    const demo = {
-      id: 999,
-      phone: "18095551234",
-      customer_name: "María Pérez (DEMO)",
-      delivery_address: "Calle Duarte #45, Los Mina, Santo Domingo Este",
-      total: 7140,
-      items: JSON.stringify([
-        { nombre: "Cabello Brasileño", detalles: "20 pulgadas, color natural", cantidad: 2, precio_unitario_rd: 2350 },
-        { nombre: "Set de brochas JOS", detalles: "rhinestone", cantidad: 1, precio_unitario_rd: 1990 }
-      ])
-    };
-    const { filename } = await generate_invoice(demo);
-    res.redirect(`/facturas/${filename}`);
-  } catch (err) {
-    logger.error({ err: err.message, stack: err.stack }, "Error en factura-demo");
-    res.status(500).send("Error generando factura demo: " + err.message);
-  }
-});
-
 // ─── Webhook receiver (POST) — Twilio ────────────────────────────
 // Twilio manda UN mensaje entrante por request, en form-encoded.
 app.post("/webhook", async (req, res) => {
