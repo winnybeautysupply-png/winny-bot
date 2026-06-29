@@ -14,7 +14,7 @@ import {
   get_active_order, create_order, update_order,
   get_pending_verification, get_latest_pending_verification
 } from "../db.js";
-import { generate_response, extract_order_from_chat } from "../ai.js";
+import { generate_response, extract_order_from_chat, generate_owner_response } from "../ai.js";
 import { append_order_row } from "../sheets.js";
 import { generate_invoice } from "../invoice.js";
 
@@ -25,6 +25,9 @@ let last_location_from = null;
 
 // Recuerda la última clienta cuyo comprobante se le reenvió a Winny (para confirmar/rechazar sin escribir el número)
 let last_comprobante_from = null;
+
+// Recuerda la última clienta (no-dueña) que escribió, para que Winny pueda decir "dile a la clienta..." sin el número
+let last_customer_from = null;
 
 // Formatea un número con separador de miles (ej: 2350 -> "2,350")
 function rd(n) { return Number(n || 0).toLocaleString("en-US"); }
@@ -320,6 +323,35 @@ async function handle_owner_command(parsed) {
   return true;
 }
 
+// ═══ MODO JEFA — Winny da una orden (no es comando de pago) ═════
+// El bot la trata como la dueña que comanda, NO como clienta.
+async function handle_owner_chat(parsed) {
+  const { from, text } = parsed;
+  const history_rows = get_recent_messages(from, 8);
+  const history = format_history(history_rows.slice(0, -1)); // excluir el mensaje actual
+  const ai = await generate_owner_response(text, history);
+
+  // Ejecutar órdenes (ej: reenviar un mensaje a una clienta)
+  for (const tool of ai.tool_calls) {
+    if (tool.name === "enviar_mensaje_cliente") {
+      const target = (tool.input.telefono || "").replace(/\D/g, "") || last_customer_from || last_comprobante_from;
+      if (!target) {
+        await send_text(from, "¿A cuál clienta se lo mando jefa? Pásame el número 💕");
+        continue;
+      }
+      const msg_id = await send_text(target, tool.input.mensaje);
+      save_message({ phone: target, direction: "out", type: "text", content: tool.input.mensaje, wa_message_id: msg_id });
+      await send_text(from, `✅ Listo jefa, le mandé a la clienta (+${target}):\n"${tool.input.mensaje}"`);
+    }
+  }
+
+  // Respuesta de texto a Winny (como su asistente)
+  if (ai.text) {
+    const msg_id = await send_text(from, ai.text);
+    save_message({ phone: from, direction: "out", type: "text", content: ai.text, wa_message_id: msg_id });
+  }
+}
+
 // ═══ Handler de TEXTO (lo más común) ═══════════════════════════
 
 async function handle_text(parsed, contact) {
@@ -424,6 +456,9 @@ export async function handle_incoming(parsed, contact_profile) {
   upsert_contact(from, contact_profile?.name);
   const contact = { name: contact_profile?.name };
 
+  // Recordar la última clienta (no-dueña) para que Winny diga "dile a la clienta..."
+  if (!is_owner(from)) last_customer_from = from;
+
   save_message({
     phone: from, direction: "in", type,
     content: parsed.text || parsed.caption || "",
@@ -435,16 +470,19 @@ export async function handle_incoming(parsed, contact_profile) {
     await mark_read(id);
   } catch (e) { /* no critical */ }
 
-  // ¿Es Winny (la dueña) mandando un comando de confirmación/rechazo de pago?
-  // Si el texto parece comando, lo procesamos; si no, sigue como conversación normal
-  // (así Winny también puede probar el bot como si fuera una clienta).
+  // ¿Es WINNY (la dueña/JEFA) escribiendo? Su número personal manda.
+  // 1) Si es un comando de pago (confirmar/rechazar/envío) → se ejecuta.
+  // 2) Si no → MODO JEFA: el bot la trata como la dueña que da órdenes,
+  //    NUNCA como clienta (no le manda chchara de venta).
   if (is_owner(from) && (type === "text" || type === "interactive" || type === "button")) {
     try {
       const handled = await handle_owner_command(parsed);
       if (handled) return;
+      await handle_owner_chat(parsed);
     } catch (err) {
-      logger.error({ err: err.message, from }, "Error en comando de Winny");
+      logger.error({ err: err.message, from }, "Error en mensaje de Winny (modo jefa)");
     }
+    return; // El mensaje de la dueña NUNCA cae al bot de clientas.
   }
 
   // Despachar según tipo

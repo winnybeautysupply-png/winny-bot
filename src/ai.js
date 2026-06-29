@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════════════════════
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "./config.js";
-import { SYSTEM_PROMPT } from "./prompts.js";
+import { SYSTEM_PROMPT, OWNER_PROMPT } from "./prompts.js";
 import { logger } from "./logger.js";
 
 const claude = new Anthropic({ apiKey: config.claude.api_key });
@@ -114,6 +114,55 @@ export async function extract_order_from_chat(history = []) {
   } catch (err) {
     logger.error({ err: err.message }, "Error extrayendo pedido del chat");
     return null;
+  }
+}
+
+// ═══ MODO JEFA — Winny (dueña) le da órdenes al bot ═══════════════
+const OWNER_TOOLS = [
+  {
+    name: "enviar_mensaje_cliente",
+    description: "Reenvía un mensaje a una clienta de parte del negocio, cuando Winny lo ordena (ej: 'dile a la clienta que...', 'escríbele que...').",
+    input_schema: {
+      type: "object",
+      properties: {
+        telefono: { type: "string", description: "número de la clienta (solo dígitos con código país, ej 18091234567) si Winny lo menciona; si no lo dice, dejar vacío para usar la última clienta con la que se habló" },
+        mensaje: { type: "string", description: "el texto EXACTO que se le enviará a la clienta" }
+      },
+      required: ["mensaje"]
+    }
+  }
+];
+
+/**
+ * Genera la respuesta del bot cuando WINNY (la dueña) le escribe (modo jefa).
+ * @param {string} user_message - lo que escribió Winny
+ * @param {Array} history - mensajes anteriores [{role, content}]
+ * @returns {Object} - { text, tool_calls }
+ */
+export async function generate_owner_response(user_message, history = []) {
+  const messages = [
+    ...history.map(m => ({ role: m.role, content: m.content })),
+    { role: "user", content: user_message }
+  ];
+  try {
+    const response = await claude.messages.create({
+      model: config.claude.model,
+      max_tokens: 500,
+      temperature: 0.5,
+      system: OWNER_PROMPT,
+      tools: OWNER_TOOLS,
+      messages
+    });
+    let text = "";
+    const tool_calls = [];
+    for (const block of response.content) {
+      if (block.type === "text") text += block.text;
+      else if (block.type === "tool_use") tool_calls.push({ name: block.name, input: block.input, id: block.id });
+    }
+    return { text: text.trim(), tool_calls };
+  } catch (err) {
+    logger.error({ err: err.message }, "Error en respuesta modo jefa");
+    return { text: "Perdón jefa, tuve un problemita técnico 😅 ¿me lo repites?", tool_calls: [] };
   }
 }
 
