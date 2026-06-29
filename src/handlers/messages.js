@@ -14,7 +14,7 @@ import {
   get_active_order, create_order, update_order,
   get_pending_verification, get_latest_pending_verification
 } from "../db.js";
-import { generate_response } from "../ai.js";
+import { generate_response, extract_order_from_chat } from "../ai.js";
 import { append_order_row } from "../sheets.js";
 import { generate_invoice } from "../invoice.js";
 
@@ -243,38 +243,70 @@ async function handle_owner_command(parsed) {
     await send_text(targetPhone,
       "¡Tu pago fue confirmado mi amor! 💕✨\nYa preparamos tu pedido y te lo enviamos enseguida. ¡Gracias por tu compra! 🛍️");
 
-    // 2) Generar la factura una sola vez y enviarla por separado a la clienta y a Winny
-    //    (cada envío independiente: si falla uno, el otro igual sale).
-    let facturaUrl = null;
+    // 2) Asegurar datos para la factura. Si el pedido no quedó registrado con
+    //    productos (ej. la venta pasó por handoff), reconstruirlo leyendo el chat.
+    let invOrder = order;
+    let hasItems = false;
     if (order) {
+      try { const arr = JSON.parse(order.items || "[]"); hasItems = Array.isArray(arr) && arr.length > 0; } catch {}
+    }
+    if (!hasItems) {
+      const history = get_recent_messages(targetPhone, 30)
+        .map(r => ({ role: r.direction === "in" ? "user" : "assistant", content: r.content || "" }));
+      const extracted = await extract_order_from_chat(history);
+      if (extracted) {
+        const subt = items_subtotal(extracted.productos);
+        const tot = subt + (Number(extracted.envio_rd) || 0);
+        invOrder = {
+          id: order?.id || Number(String(targetPhone).slice(-5)) || 0,
+          phone: targetPhone,
+          customer_name: extracted.nombre_cliente || order?.customer_name || "",
+          delivery_address: extracted.direccion || order?.delivery_address || "",
+          items: extracted.productos,
+          total: tot
+        };
+        // Si existe el pedido en la BD, completarlo con lo extraído
+        if (order) update_order(order.id, {
+          items: extracted.productos,
+          customer_name: invOrder.customer_name,
+          delivery_address: invOrder.delivery_address,
+          total: tot
+        });
+      }
+    }
+
+    // Generar la factura una sola vez y enviarla por separado a la clienta y a Winny
+    // (cada envío independiente: si falla uno, el otro igual sale).
+    let facturaUrl = null;
+    if (invOrder) {
       try {
-        const { filename } = await generate_invoice(order);
+        const { filename } = await generate_invoice(invOrder);
         facturaUrl = `${config.public_base_url}/facturas/${filename}`;
       } catch (err) {
-        logger.error({ err: err.message, order_id: order.id }, "Error generando factura");
+        logger.error({ err: err.message, order_id: invOrder.id }, "Error generando factura");
       }
     }
     let factClienteOk = false, factWinnyOk = false;
     if (facturaUrl) {
       try {
         const sid = await send_image(targetPhone, facturaUrl,
-          `🧾 Aquí está la factura de tu pedido #${order.id}, mi amor 💕`);
+          `🧾 Aquí está la factura de tu pedido #${invOrder.id}, mi amor 💕`);
         factClienteOk = !!sid;
       } catch (err) { logger.error({ err: err.message }, "Error enviando factura a la clienta"); }
       try {
         const sid = await send_image(owner, facturaUrl,
-          `🧾 *Factura del pedido #${order.id}*${order.customer_name ? ` — ${order.customer_name}` : ""}\nPara que el empacador prepare el pedido 📦`);
+          `🧾 *Factura del pedido #${invOrder.id}*${invOrder.customer_name ? ` — ${invOrder.customer_name}` : ""}\nPara que el empacador prepare el pedido 📦`);
         factWinnyOk = !!sid;
       } catch (err) { logger.error({ err: err.message }, "Error enviando factura a Winny"); }
     }
 
     // 3) Resumen claro para Winny de qué pasó
     let nota;
-    if (!order) nota = "\n⚠️ No había un pedido registrado, así que no pude hacer la factura automática. Si quieres, la haces a mano.";
-    else if (factClienteOk) nota = `\n🧾 Le mandé la factura a la clienta${factWinnyOk ? " y a ti." : " (a ti no te llegó, revisa)."}`;
-    else nota = "\n⚠️ El pago quedó confirmado pero no pude enviarle la factura a la clienta (revisa el log).";
+    if (factClienteOk) nota = `\n🧾 Le mandé la factura a la clienta${factWinnyOk ? " y a ti." : " (a ti no te llegó, revisa)."}`;
+    else if (facturaUrl) nota = "\n⚠️ El pago quedó confirmado pero no pude enviarle la factura a la clienta (revisa el log).";
+    else nota = "\n⚠️ No pude armar la factura (no encontré los productos del pedido en la conversación). Confírmame qué pidió y te la hago.";
     await send_text(owner,
-      `✅ Pago confirmado${order?.customer_name ? ` de *${order.customer_name}*` : ""} (+${targetPhone}). Ya le avisé que su pedido va en camino 💕` + nota);
+      `✅ Pago confirmado${invOrder?.customer_name ? ` de *${invOrder.customer_name}*` : ""} (+${targetPhone}). Ya le avisé que su pedido va en camino 💕` + nota);
   } else {
     if (order) update_order(order.id, { status: "payment_rejected" });
     await send_text(targetPhone,

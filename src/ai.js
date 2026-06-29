@@ -56,6 +56,67 @@ const TOOLS = [
   }
 ];
 
+// Tool para EXTRAER los datos de un pedido de una conversación (para la factura)
+const EXTRACT_TOOL = {
+  name: "datos_pedido",
+  description: "Extrae los datos del pedido de esta conversación de WhatsApp para generar la factura.",
+  input_schema: {
+    type: "object",
+    properties: {
+      hay_pedido: { type: "boolean", description: "true SOLO si en la conversación hay un pedido identificable con productos que la clienta quiere comprar" },
+      nombre_cliente: { type: "string", description: "nombre de la clienta si se menciona" },
+      direccion: { type: "string", description: "dirección de envío si se menciona" },
+      productos: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            nombre: { type: "string" },
+            detalles: { type: "string", description: "color/largo/tipo" },
+            cantidad: { type: "number" },
+            precio_unitario_rd: { type: "number", description: "precio unitario en RD$ según la conversación" }
+          },
+          required: ["nombre", "cantidad"]
+        }
+      },
+      envio_rd: { type: "number", description: "costo de envío en RD$ si se mencionó; si no, 0" }
+    },
+    required: ["hay_pedido", "productos"]
+  }
+};
+
+/**
+ * Extrae los datos del pedido de una conversación, para armar la factura cuando
+ * el pedido no quedó registrado formalmente (ej. la venta pasó por handoff).
+ * @param {Array} history - [{role, content}]
+ * @returns {Object|null} - {nombre_cliente, direccion, productos, envio_rd} o null
+ */
+export async function extract_order_from_chat(history = []) {
+  if (!history.length) return null;
+  const convo = history
+    .map(m => `${m.role === "user" ? "Clienta" : "Winny/Bot"}: ${m.content}`)
+    .join("\n");
+  try {
+    const response = await claude.messages.create({
+      model: config.claude.model,
+      max_tokens: 600,
+      temperature: 0,
+      system: "Extraes datos de pedidos de Winny Beauty Supply (extensiones de cabello humano, pelucas, accesorios) de una conversación de WhatsApp, para generar una factura. Usa los productos y precios que se mencionen en la conversación. Si no hay un pedido claro con productos, pon hay_pedido=false.",
+      tools: [EXTRACT_TOOL],
+      tool_choice: { type: "tool", name: "datos_pedido" },
+      messages: [{ role: "user", content: `Conversación:\n\n${convo}\n\nExtrae el pedido para la factura.` }]
+    });
+    const block = response.content.find(b => b.type === "tool_use");
+    if (!block) return null;
+    const d = block.input;
+    if (!d.hay_pedido || !Array.isArray(d.productos) || d.productos.length === 0) return null;
+    return d;
+  } catch (err) {
+    logger.error({ err: err.message }, "Error extrayendo pedido del chat");
+    return null;
+  }
+}
+
 /**
  * Genera respuesta para un mensaje del cliente.
  * @param {string} user_message - lo que escribió el cliente
