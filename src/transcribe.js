@@ -61,7 +61,15 @@ export async function transcribe_audio(file_path, mime = "audio/ogg") {
       alternativeLanguageCodes: ["es-US", "es-419"],
       enableAutomaticPunctuation: true
     };
-    if (encoding) recognitionConfig.encoding = encoding; // OGG_OPUS lleva el sample rate en el header
+    if (encoding) {
+      recognitionConfig.encoding = encoding;
+      // Google exige el sample rate para Opus. Las notas de voz de WhatsApp
+      // son OGG_OPUS a 16 kHz (VERIFICADO con audio real: 16000 transcribe
+      // perfecto, 48000 devuelve vacío). AMR=8kHz, AMR-WB=16kHz.
+      if (encoding === "OGG_OPUS") recognitionConfig.sampleRateHertz = 16000;
+      else if (encoding === "AMR") recognitionConfig.sampleRateHertz = 8000;
+      else if (encoding === "AMR_WB") recognitionConfig.sampleRateHertz = 16000;
+    }
 
     const res = await fetch("https://speech.googleapis.com/v1/speech:recognize", {
       method: "POST",
