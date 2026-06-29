@@ -46,7 +46,8 @@ export function generate_invoice(order) {
 
       const items = parse_items(order.items);
       const subtotal = items_subtotal(items);
-      const total = Number(order.total) || subtotal;
+      // El total nunca puede ser menor que los productos
+      const total = Math.max(Number(order.total) || 0, subtotal);
       const envio = total > subtotal ? total - subtotal : 0;
 
       const fecha = new Date().toLocaleDateString("es-DO", {
@@ -145,17 +146,17 @@ export function generate_invoice(order) {
       totalLine("TOTAL:", rd(total), { bold: true, big: true, color: PINK });
 
       // ─── Pie ───
-      const footY = doc.page.height - 110;
+      const footY = doc.page.height - 150;
       doc.moveTo(left, footY).lineTo(right, footY).lineWidth(1).strokeColor("#EEEEEE").stroke();
       doc.fillColor(GRAY).font("Helvetica").fontSize(8.5)
         .text("Sucursales:  Santo Domingo — Calle Ana Valverde No. 8, Mejoramiento Social   ·   " +
               "San Pedro de Macorís — frente a la Clínica de León, calle General Cabral, Placer Bonito",
-              left, footY + 8, { width, align: "center" });
+              left, footY + 10, { width, align: "center" });
       doc.fillColor(PINK).font("Helvetica-Bold").fontSize(11)
-        .text("¡Gracias por tu compra, belleza!", left, footY + 34, { width, align: "center" });
+        .text("¡Gracias por tu compra, belleza!", left, footY + 44, { width, align: "center" });
       doc.fillColor(GRAY).font("Helvetica").fontSize(8)
         .text("No se aceptan cambios ni devoluciones. Pedido preparado tras confirmación de pago.",
-              left, footY + 52, { width, align: "center" });
+              left, footY + 64, { width, align: "center" });
 
       doc.end();
 

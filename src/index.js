@@ -55,7 +55,7 @@ app.get("/factura-demo", async (_req, res) => {
       phone: "18095551234",
       customer_name: "María Pérez (DEMO)",
       delivery_address: "Calle Duarte #45, Los Mina, Santo Domingo Este",
-      total: 5250,
+      total: 7140,
       items: JSON.stringify([
         { nombre: "Cabello Brasileño", detalles: "20 pulgadas, color natural", cantidad: 2, precio_unitario_rd: 2350 },
         { nombre: "Set de brochas JOS", detalles: "rhinestone", cantidad: 1, precio_unitario_rd: 1990 }
