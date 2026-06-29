@@ -59,6 +59,15 @@ export const config = {
   // URL pública del bot (para servir comprobantes a Winny)
   public_base_url: optional("PUBLIC_BASE_URL", "https://winny-bot.onrender.com"),
 
+  // Google Sheets — donde caen los pedidos automáticamente
+  sheets: {
+    enabled: !!(process.env.GOOGLE_SHEET_ID && process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGLE_PRIVATE_KEY),
+    sheet_id: optional("GOOGLE_SHEET_ID", ""),
+    service_account_email: optional("GOOGLE_SERVICE_ACCOUNT_EMAIL", ""),
+    // En Render el salto de línea viene escapado como "\n" literal → lo restauramos
+    private_key: optional("GOOGLE_PRIVATE_KEY", "").replace(/\\n/g, "\n")
+  },
+
   // DB y storage
   db_path: optional("DB_PATH", "./data/winny-bot.db"),
   receipts_dir: optional("RECEIPTS_DIR", "./data/comprobantes")

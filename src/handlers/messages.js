@@ -15,6 +15,7 @@ import {
   get_pending_verification, get_latest_pending_verification
 } from "../db.js";
 import { generate_response } from "../ai.js";
+import { append_order_row } from "../sheets.js";
 
 // ═══ Helpers ═══════════════════════════════════════════════════
 
@@ -290,6 +291,24 @@ async function handle_text(parsed, contact) {
         (tool.input.notas ? `📝 ${tool.input.notas}\n` : "") +
         `\nEl bot ya le pidió el pago. Tú confirmas disponibilidad y total final 💕`
       );
+
+      // Guardar el pedido en Google Sheets (no bloquea la respuesta al cliente)
+      const productos = tool.input.productos || [];
+      const fecha = new Date().toLocaleString("es-DO", { timeZone: config.business.timezone });
+      const nombres_prod = productos.map(p => p.nombre).filter(Boolean).join(", ");
+      const cantidad_total = productos.reduce((s, p) => s + (Number(p.cantidad) || 1), 0);
+      const detalles = productos.map(p => p.detalles).filter(Boolean).join(" / ");
+      append_order_row([
+        fecha,                                    // Fecha
+        tool.input.nombre_cliente || "",          // Nombre
+        `+${from}`,                               // Teléfono
+        nombres_prod,                             // Producto
+        cantidad_total,                           // Cantidad
+        detalles,                                 // Color/Largo
+        subtotal ? `RD$${rd(subtotal)}` : "",     // Total (producto, falta envío)
+        "Pendiente de pago",                      // Estado del pago
+        tool.input.direccion || ""                // Dirección
+      ]).catch(err => logger.error({ err: err.message }, "Sheets append falló"));
     }
   }
 
