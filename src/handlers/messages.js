@@ -287,14 +287,16 @@ export async function handle_incoming(parsed, contact_profile) {
         urgency: "baja"
       });
       break;
-    case "location":
-      await send_text(from, "¡Gracias por la ubicación mi amor! 📍 Winny la usa para coordinar el envío 💕");
-      await notify_winny({
-        from, contact_name: contact.name,
-        reason: `Cliente compartió ubicación: ${parsed.latitude}, ${parsed.longitude}`,
-        urgency: "media"
-      });
+    case "location": {
+      await send_text(from, "¡Gracias por tu ubicación mi amor! 📍 Winny te confirma el costo del envío según tu zona en breve 💕");
+      const maps = `https://maps.google.com/?q=${parsed.latitude},${parsed.longitude}`;
+      await send_text(config.business.owner_phone,
+        `📍 *Ubicación para envío (Santo Domingo)*\n` +
+        `📱 Cliente: +${from}${contact.name ? ` (${contact.name})` : ""}\n` +
+        `🗺️ Ver zona: ${maps}\n\n` +
+        `Confírmale a la clienta el costo del envío según su zona 💕`);
       break;
+    }
     default:
       logger.warn({ type, from }, "Tipo de mensaje no manejado");
       await send_text(from, "Recibí tu mensaje mi amor 💕 ¿Me lo puedes mandar como texto? Así te ayudo más rápido ✨");
