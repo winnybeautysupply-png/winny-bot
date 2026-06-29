@@ -21,6 +21,17 @@ import { generate_response } from "../ai.js";
 // Recuerda la última clienta que mandó ubicación (para cotizar su envío sin escribir el número)
 let last_location_from = null;
 
+// Formatea un número con separador de miles (ej: 2350 -> "2,350")
+function rd(n) { return Number(n || 0).toLocaleString("en-US"); }
+
+// Suma el precio de los productos de un pedido (cantidad × precio unitario)
+function items_subtotal(items) {
+  let arr = items;
+  if (typeof arr === "string") { try { arr = JSON.parse(arr); } catch { arr = []; } }
+  if (!Array.isArray(arr)) return 0;
+  return arr.reduce((s, p) => s + (Number(p.precio_unitario_rd) || 0) * (Number(p.cantidad) || 1), 0);
+}
+
 function format_history(rows) {
   return rows.map(r => ({
     role: r.direction === "in" ? "user" : "assistant",
@@ -155,16 +166,34 @@ async function handle_owner_command(parsed) {
         "Mándame: *envio +1809XXXXXXX 250* (su número y el precio).");
       return true;
     }
-    // Guardar el costo del envío en el pedido activo (si hay) para la factura
+    // Buscar el pedido para calcular el TOTAL (producto + envío)
     const order = get_active_order(targetPhone) || get_pending_verification(targetPhone);
+    const subtotal = order ? items_subtotal(order.items) : 0;
+    const total = subtotal + cmd.amount;
+
     if (order) {
       const prevNotes = order.notes ? `${order.notes} | ` : "";
-      update_order(order.id, { notes: `${prevNotes}Envío: RD$${cmd.amount}` });
+      update_order(order.id, { total: total || cmd.amount, notes: `${prevNotes}Envío: RD$${cmd.amount}` });
     }
-    await send_text(targetPhone,
-      `El envío a tu zona es de *RD$${cmd.amount}* mi amor 💕\nEste costo se suma a tu pedido. ¿Confirmas para coordinar el pago? ✨`);
+
+    let clientMsg;
+    if (subtotal > 0) {
+      clientMsg =
+        `¡Listo mi amor! 💕 El envío a tu zona es de *RD$${rd(cmd.amount)}*.\n\n` +
+        `🛍️ Producto: RD$${rd(subtotal)}\n` +
+        `🚚 Envío: RD$${rd(cmd.amount)}\n` +
+        `💰 *Total a pagar: RD$${rd(total)}*\n\n` +
+        `¿Confirmas tu pedido para pasarte los datos del pago? ✨`;
+    } else {
+      clientMsg =
+        `El envío a tu zona es de *RD$${rd(cmd.amount)}* mi amor 💕\n` +
+        `Este costo se suma al precio de tu pelo. ¿Confirmas tu pedido para coordinar el pago? ✨`;
+    }
+    await send_text(targetPhone, clientMsg);
     await send_text(owner,
-      `✅ Le dije a la clienta (+${targetPhone}) que su envío es RD$${cmd.amount} 💕`);
+      `✅ Le dije a la clienta (+${targetPhone}) que su envío es RD$${rd(cmd.amount)}` +
+      (subtotal > 0 ? `, total RD$${rd(total)} (producto RD$${rd(subtotal)} + envío RD$${rd(cmd.amount)})` : "") +
+      ` 💕`);
     return true;
   }
 
@@ -236,17 +265,19 @@ async function handle_text(parsed, contact) {
       return;
     } else if (tool.name === "registrar_pedido") {
       const order = get_active_order(from) || { id: create_order(from) };
+      const subtotal = items_subtotal(tool.input.productos || []);
       update_order(order.id, {
         status: "awaiting_payment",
         items: tool.input.productos || [],
         customer_name: tool.input.nombre_cliente,
         delivery_address: tool.input.direccion,
         payment_method: tool.input.metodo_pago,
+        total: subtotal || null,
         notes: tool.input.notas || ""
       });
       // Notificar a Winny del pedido
       const items_text = (tool.input.productos || [])
-        .map(p => `• ${p.cantidad}× ${p.nombre}${p.detalles ? ` (${p.detalles})` : ""}`)
+        .map(p => `• ${p.cantidad}× ${p.nombre}${p.detalles ? ` (${p.detalles})` : ""}${p.precio_unitario_rd ? ` — RD$${rd(p.precio_unitario_rd)}` : ""}`)
         .join("\n");
       await send_text(config.business.owner_phone,
         `🛍️ *Nuevo pedido* (#${order.id})\n\n` +
@@ -254,7 +285,8 @@ async function handle_text(parsed, contact) {
         `👤 ${tool.input.nombre_cliente}\n` +
         `📍 ${tool.input.direccion}\n` +
         `💳 ${tool.input.metodo_pago}\n\n` +
-        `*Productos:*\n${items_text}\n\n` +
+        `*Productos:*\n${items_text}\n` +
+        (subtotal ? `\n🛍️ Subtotal producto: *RD$${rd(subtotal)}* (falta sumar envío)\n` : "") +
         (tool.input.notas ? `📝 ${tool.input.notas}\n` : "") +
         `\nEl bot ya le pidió el pago. Tú confirmas disponibilidad y total final 💕`
       );
