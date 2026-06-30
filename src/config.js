@@ -65,7 +65,10 @@ export const config = {
     sheet_id: optional("GOOGLE_SHEET_ID", ""),
     service_account_email: optional("GOOGLE_SERVICE_ACCOUNT_EMAIL", ""),
     // En Render el salto de línea viene escapado como "\n" literal → lo restauramos
-    private_key: optional("GOOGLE_PRIVATE_KEY", "").replace(/\\n/g, "\n")
+    private_key: optional("GOOGLE_PRIVATE_KEY", "").replace(/\\n/g, "\n"),
+    // Catálogo de productos (hoja "catalogo winny", pestaña "Catalogo")
+    catalog_sheet_id: optional("GOOGLE_CATALOG_SHEET_ID", "18C-c4FAojysgBVjMLUB-_29qm2W7xsW9fFGVWForRoY"),
+    catalog_tab: optional("GOOGLE_CATALOG_TAB", "Catalogo")
   },
 
   // DB y storage

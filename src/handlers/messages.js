@@ -18,6 +18,7 @@ import { generate_response, extract_order_from_chat, generate_owner_response } f
 import { append_order_row } from "../sheets.js";
 import { generate_invoice } from "../invoice.js";
 import { transcribe_audio, transcription_enabled } from "../transcribe.js";
+import { find_products, get_offers } from "../catalog.js";
 
 // ═══ Helpers ═══════════════════════════════════════════════════
 
@@ -70,6 +71,22 @@ async function send_bank_accounts(to) {
   ).join("\n\n");
   const msg = `Estos son nuestros datos para transferencia 💳\n\n${lines}\n\nCuando hagas el pago, mándame foto del comprobante por aquí 📸✨`;
   return send_text(to, msg);
+}
+
+// ═══ Enviar un producto del catálogo (foto/video Cloudinary + precio) ═══
+async function send_product(to, p) {
+  const lines = [`🛍️ *${p.nombre}*`, `💵 RD$${rd(p.precio_detalle)}`];
+  if (p.precio_mayor) lines.push(`📦 Por ${p.cant_mayor || "mayor"}: RD$${rd(p.precio_mayor)} c/u`);
+  if (p.precio_caja) lines.push(`📦 Por caja${p.unidades_caja ? ` (${p.unidades_caja} und)` : ""}: RD$${rd(p.precio_caja)} c/u`);
+  if (p.colores) lines.push(`🎨 Colores: ${p.colores}`);
+  if (p.oferta) lines.push(`🔥 ¡EN OFERTA!`);
+  const caption = lines.join("\n");
+  if (p.media_url && p.media_url.startsWith("http")) {
+    const sid = await send_image(to, p.media_url, caption);
+    if (!sid) await send_text(to, caption); // si el media falla, al menos mandar el texto
+  } else {
+    await send_text(to, caption);
+  }
 }
 
 // ═══ Handler de IMAGEN (probable comprobante de pago) ══════════
@@ -482,6 +499,21 @@ async function handle_text(parsed, contact) {
         "Pendiente de pago",                      // Estado del pago
         tool.input.direccion || ""                // Dirección
       ]).catch(err => logger.error({ err: err.message }, "Sheets append falló"));
+    } else if (tool.name === "mostrar_producto") {
+      const prods = await find_products(tool.input.descripcion || "", 2);
+      if (!prods.length) {
+        await send_text(from, "Mi amor, déjame confirmar ese producto con Winny y te lo muestro enseguida 💕");
+      } else {
+        for (const p of prods) await send_product(from, p);
+      }
+    } else if (tool.name === "mostrar_ofertas") {
+      const offers = await get_offers();
+      if (!offers.length) {
+        await send_text(from, "Ahora mismo no tengo ofertas activas mi amor 💕 pero dime qué buscas y te doy el mejor precio ✨");
+      } else {
+        await send_text(from, "¡Mira nuestras ofertas, mi amor! 🔥");
+        for (const p of offers.slice(0, 6)) await send_product(from, p);
+      }
     }
   }
 

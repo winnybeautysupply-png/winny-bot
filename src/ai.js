@@ -4,6 +4,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "./config.js";
 import { SYSTEM_PROMPT, OWNER_PROMPT } from "./prompts.js";
+import { catalog_summary } from "./catalog.js";
 import { logger } from "./logger.js";
 
 const claude = new Anthropic({ apiKey: config.claude.api_key });
@@ -52,6 +53,22 @@ const TOOLS = [
   {
     name: "compartir_cuentas_bancarias",
     description: "Envía las cuentas bancarias al cliente cuando elige pagar por transferencia.",
+    input_schema: { type: "object", properties: {} }
+  },
+  {
+    name: "mostrar_producto",
+    description: "Cuando la clienta describe un producto que quiere ver (ej. 'peluca rizada', 'set de maquillaje', 'pelo piano'), llama esta función con esa descripción. El sistema busca en el catálogo y le manda a la clienta la FOTO/VIDEO del producto con su nombre y precio. Úsala cuando pregunten por un producto o pidan ver fotos/videos.",
+    input_schema: {
+      type: "object",
+      properties: {
+        descripcion: { type: "string", description: "Lo que busca la clienta, ej: 'peluca rizada negra', 'set brochas'" }
+      },
+      required: ["descripcion"]
+    }
+  },
+  {
+    name: "mostrar_ofertas",
+    description: "Cuando la clienta pide ver las OFERTAS o promociones, llama esta función (sin parámetros). El sistema le manda las fotos/videos de los productos en oferta con sus precios.",
     input_schema: { type: "object", properties: {} }
   }
 ];
@@ -183,12 +200,21 @@ export async function generate_response(user_message, history = [], ctx = {}) {
     { role: "user", content: user_message }
   ];
 
+  // Inyectar el catálogo real (inventario) para que Claude conozca los productos
+  let catalog_text = "";
+  try {
+    const cat = await catalog_summary();
+    if (cat) catalog_text =
+      `\n\n═══ CATÁLOGO REAL (inventario actual — ofrece SOLO estos productos) ═══\n${cat}\n\n` +
+      `Cuando la clienta pregunte por uno de estos productos o pida ver fotos/videos, usa la herramienta *mostrar_producto* (con la descripción) para mandarle la foto/video y el precio. Si pide ofertas, usa *mostrar_ofertas*. NO inventes productos ni precios fuera de este catálogo.`;
+  } catch { /* si falla, sigue sin catálogo */ }
+
   try {
     const response = await claude.messages.create({
       model: config.claude.model,
       max_tokens: 600,
       temperature: 0.7,
-      system: SYSTEM_PROMPT + ctx_text,
+      system: SYSTEM_PROMPT + catalog_text + ctx_text,
       tools: TOOLS,
       messages
     });
