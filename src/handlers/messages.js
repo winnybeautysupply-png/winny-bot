@@ -34,6 +34,54 @@ let last_comprobante_from = null;
 // Recuerda la última clienta (no-dueña) que escribió, para que Winny pueda decir "dile a la clienta..." sin el número
 let last_customer_from = null;
 
+// Recuerda el último RECIBO DE ENVÍO que Winny mandó sin número, para reenviarlo cuando ella dé el número
+let last_owner_receipt = null;
+
+// Extrae un teléfono dominicano de un texto (809/829/849). Devuelve con código país (1XXXXXXXXXX) o null.
+function extract_phone(text) {
+  const m = (text || "").match(/(?:\+?1[\s\-.]?)?\(?(8[024]9)\)?[\s\-.]?\d{3}[\s\-.]?\d{4}/);
+  if (!m) return null;
+  let d = m[0].replace(/\D/g, "");
+  if (d.length === 10) d = "1" + d;                 // 809XXXXXXX -> 1809XXXXXXX
+  return (d.length === 11 && d[0] === "1") ? d : null;
+}
+
+// Reenvía un recibo de ENVÍO (paquetería) a una clienta para que retire su pedido.
+async function forward_shipping_receipt(to, image_url) {
+  const msg =
+    "¡Hola reina! 💕 ¡Tu pedido ya va en camino! 📦✨\n\n" +
+    "Aquí te dejo el recibo para que RETIRES tu paquete en la empresa de envío (fíjate en el recibo dónde retirarlo y el número de guía). " +
+    "¡Gracias por tu compra mi amor! 🛍️💖";
+  const sid = await send_image(to, image_url, msg);
+  if (!sid) await send_text(to, msg);
+  save_message({ phone: to, direction: "out", type: "image", content: "[recibo de envío reenviado]", media_path: null, wa_message_id: sid });
+  logger.info({ to, sid }, "📦 recibo de envío reenviado a la clienta");
+}
+
+// Winny (dueña) manda una FOTO (recibo de envío) desde su número → reenviarla a la clienta.
+async function handle_owner_image(parsed) {
+  const { from, media_url, mime, caption } = parsed;
+  const owner = config.business.owner_phone;
+  const filename = `envio-${Date.now()}.${(mime?.split("/")[1]) || "jpg"}`;
+  const save_to = path.join(config.receipts_dir, filename);
+
+  const dl = await download_media(media_url, save_to);
+  if (!dl) { await send_text(owner, "No me llegó bien la imagen jefa 😅 ¿me la reenvías?"); return; }
+  const public_url = `${config.public_base_url}/comprobantes/${filename}`;
+
+  const target = extract_phone(caption);
+  if (target) {
+    last_owner_receipt = null;
+    await forward_shipping_receipt(target, public_url);
+    await send_text(owner, `✅ Listo jefa, le reenvié el recibo de envío a la clienta +${target} 📦💕`);
+  } else {
+    // No vino el número en la foto → guardar y pedirlo
+    last_owner_receipt = { url: public_url };
+    await send_text(owner,
+      "📦 Recibí el recibo de envío jefa. ¿A cuál clienta se lo reenvío? Mándame el número (ej: 8091234567) y se lo envío de una vez 💕");
+  }
+}
+
 // Formatea un número con separador de miles (ej: 2350 -> "2,350")
 function rd(n) { return Number(n || 0).toLocaleString("en-US"); }
 
@@ -206,10 +254,17 @@ async function handle_image(parsed, contact) {
     return;
   }
 
-  // 3) COMPROBANTE / RECIBO DE PAGO → flujo de verificación (solo si es pago con confianza).
-  if ((cls.es_pago || cat === "comprobante_pago" || cat === "recibo") && conf >= 0.5) {
-    logger.info({ from }, "🖼️→ ruta: COMPROBANTE de pago");
+  // 3) COMPROBANTE BANCARIO (pago) → flujo de verificación de pago.
+  if ((cls.es_pago || cat === "comprobante_bancario") && !cls.es_recibo_envio && conf >= 0.5) {
+    logger.info({ from }, "🖼️→ ruta: COMPROBANTE BANCARIO (pago)");
     await process_payment_receipt(parsed, contact, save_to, filename);
+    return;
+  }
+
+  // 3b) RECIBO DE ENVÍO / PAQUETERÍA que manda una clienta (raro) → acusar recibo, NO es pago.
+  if (cls.es_recibo_envio || cat === "recibo_envio") {
+    logger.info({ from }, "🖼️→ ruta: recibo de ENVÍO (de clienta)");
+    await send_text(from, "¡Gracias reina! 💕 Recibí tu recibo de envío. Si necesitas algo con tu pedido o quieres coordinar el retiro, dime 📦✨");
     return;
   }
 
@@ -340,6 +395,17 @@ function parse_owner_command(text) {
 }
 
 async function handle_owner_command(parsed) {
+  // ¿Hay un recibo de envío pendiente y Winny manda el número de la clienta? → reenviarlo.
+  if (last_owner_receipt) {
+    const t = extract_phone(parsed.text);
+    if (t) {
+      await forward_shipping_receipt(t, last_owner_receipt.url);
+      await send_text(config.business.owner_phone, `✅ Reenviado el recibo de envío a la clienta +${t} 📦💕`);
+      last_owner_receipt = null;
+      return true;
+    }
+  }
+
   const cmd = parse_owner_command(parsed.text);
   if (!cmd) return false; // no es comando → que siga el flujo normal de conversación
 
@@ -687,6 +753,12 @@ export async function handle_incoming(parsed, contact_profile) {
       logger.error({ err: err.message, from }, "Error en mensaje de Winny (modo jefa)");
     }
     return; // El mensaje de la dueña NUNCA cae al bot de clientas.
+  }
+  // Winny manda una FOTO (recibo de envío) → reenviarla a la clienta, NO tratarla como comprobante.
+  if (is_owner(from) && type === "image") {
+    try { await handle_owner_image(parsed); }
+    catch (err) { logger.error({ err: err.message, from }, "Error en imagen de Winny (recibo de envío)"); }
+    return;
   }
 
   // Despachar según tipo

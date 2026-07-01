@@ -145,15 +145,15 @@ const IMAGE_CLASSIFY_TOOL = {
       categoria: {
         type: "string",
         enum: [
-          "comprobante_pago", "recibo", "factura", "documento",
+          "comprobante_bancario", "recibo_envio", "factura", "documento",
           "peluca_producto", "cabello_peinado", "persona_con_peluca",
           "captura_conversacion", "captura_producto",
           "maniqui", "caja", "logo", "otro"
         ],
-        description: "La categoría que MEJOR describe la imagen"
+        description: "La categoría que MEJOR describe la imagen. OJO: 'comprobante_bancario' = transferencia/depósito/pago por banco (dinero). 'recibo_envio' = guía o recibo de una empresa de paquetería (Caribe Tours, Vimenpaq, autobús, etc.) para RETIRAR un paquete. NO son lo mismo."
       },
       descripcion: { type: "string", description: "Qué se ve en la imagen, en español, 1-2 frases" },
-      texto_visible: { type: "string", description: "Todo el texto legible en la imagen (montos, banco, nombre, etc.); vacío si no hay" },
+      texto_visible: { type: "string", description: "Todo el texto legible en la imagen (montos, banco, empresa de envío, número de guía, nombre, etc.); vacío si no hay" },
       atributos_cabello: {
         type: "object",
         description: "Solo si se ve cabello/peluca",
@@ -162,7 +162,8 @@ const IMAGE_CLASSIFY_TOOL = {
           largo: { type: "string" }, tipo: { type: "string", description: "humano, sintético, piano, etc." }
         }
       },
-      es_pago: { type: "boolean", description: "true SOLO si es claramente un comprobante/recibo/transferencia de PAGO" },
+      es_pago: { type: "boolean", description: "true SOLO si es un comprobante/transferencia/depósito BANCARIO de PAGO (dinero). FALSE para recibos de paquetería/envío." },
+      es_recibo_envio: { type: "boolean", description: "true si es un recibo/guía de una empresa de ENVÍO o paquetería (Caribe Tours, Vimenpaq, paquetería de autobús, Caribe Pack, etc.) — NO es un pago bancario." },
       confianza: { type: "number", description: "0 a 1, qué tan seguro estás de la categoría" }
     },
     required: ["categoria", "descripcion", "es_pago", "confianza"]
@@ -192,7 +193,7 @@ export async function analyze_image(base64, media_type = "image/jpeg", history =
       model: config.claude.model,
       max_tokens: 500,
       temperature: 0,
-      system: "Eres un clasificador de visión para el WhatsApp de Winny Beauty Supply (tienda de pelucas y cabello humano en RD). Analizas imágenes que mandan las clientas y las clasificas con precisión. NO asumas que todo es un comprobante de pago: solo marca es_pago=true si REALMENTE ves un comprobante, recibo o transferencia bancaria.",
+      system: "Eres un clasificador de visión para el WhatsApp de Winny Beauty Supply (tienda de pelucas y cabello humano en RD). Analizas imágenes que mandan las clientas y las clasificas con precisión. NO asumas que todo es un comprobante de pago. DISTINGUE bien: (a) COMPROBANTE BANCARIO = una transferencia, depósito o pago por banco (app bancaria, montos en RD$, banco Popular/BHD/Reservas/etc.) → es_pago=true. (b) RECIBO DE ENVÍO = una guía o recibo de una empresa de paquetería para retirar un paquete (Caribe Tours, Vimenpaq, paquetería de autobús, Caribe Pack, Metro) → es_recibo_envio=true, es_pago=false. Son documentos DISTINTOS, no los confundas.",
       tools: [IMAGE_CLASSIFY_TOOL],
       tool_choice: { type: "tool", name: "clasificar_imagen" },
       messages
