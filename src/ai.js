@@ -161,12 +161,19 @@ export async function generate_owner_response(user_message, history = []) {
     ...history.map(m => ({ role: m.role, content: m.content })),
     { role: "user", content: user_message }
   ];
+  // Referencia de productos/precios/políticas para que el bot pueda RESPONDERLE a Winny
+  // si ella le pregunta un precio o dato del negocio (NO para venderle ni tratarla como clienta).
+  const ref_info =
+    "\n\n═══ REFERENCIA DE PRODUCTOS, PRECIOS Y POLÍTICAS ═══\n" +
+    "Usa esta información SOLO para responderle a Winny (la jefa) cuando te pregunte un precio o dato del negocio. " +
+    "NO le hagas discurso de venta ni la trates como clienta. Solo dale el dato que pide, corto y directo.\n" +
+    SYSTEM_PROMPT;
   try {
     const response = await claude.messages.create({
       model: config.claude.model,
       max_tokens: 500,
       temperature: 0.5,
-      system: OWNER_PROMPT,
+      system: OWNER_PROMPT + ref_info,
       tools: OWNER_TOOLS,
       messages
     });
