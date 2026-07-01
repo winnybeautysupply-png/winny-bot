@@ -20,6 +20,7 @@ import { append_order_row } from "../sheets.js";
 import { generate_invoice } from "../invoice.js";
 import { transcribe_audio, transcription_enabled } from "../transcribe.js";
 import { find_products, get_offers } from "../catalog.js";
+import { get_or_generate_image } from "../imagegen.js";
 
 // ═══ Helpers ═══════════════════════════════════════════════════
 
@@ -99,6 +100,12 @@ function fast_media_url(url) {
   return url.replace("/upload/f_auto,q_auto/", "/upload/f_jpg,q_auto:good,w_1080/");
 }
 
+// Arma una descripción del producto (para generar la imagen con IA si no hay foto real).
+function describe_product(p) {
+  return [p.nombre, p.colores ? `color ${p.colores}` : "", p.etiquetas]
+    .filter(Boolean).join(", ");
+}
+
 // ═══ Enviar un producto del catálogo (foto/video Cloudinary + precio) ═══
 async function send_product(to, p) {
   const lines = [`🛍️ *${p.nombre}*`, `💵 RD$${rd(p.precio_detalle)}`];
@@ -111,9 +118,13 @@ async function send_product(to, p) {
   // así, aunque Twilio no entregue la imagen, la clienta SIEMPRE recibe nombre + precio.
   const txt_sid = await send_text(to, caption);
   logger.info({ to, prod: p.nombre, precio: p.precio_detalle, txt_sid }, "📤 producto (texto)");
-  if (p.media_url && p.media_url.startsWith("http")) {
-    const img_sid = await send_image(to, fast_media_url(p.media_url), "");
-    logger.info({ to, prod: p.nombre, img_sid }, "📤 producto (foto)");
+  // Foto REAL si existe; si no, imagen generada con IA (con caché).
+  let media = (p.media_url && p.media_url.startsWith("http")) ? fast_media_url(p.media_url) : null;
+  let generada = false;
+  if (!media) { media = await get_or_generate_image(describe_product(p)); generada = !!media; }
+  if (media) {
+    const img_sid = await send_image(to, media, "");
+    logger.info({ to, prod: p.nombre, img_sid, generada }, "📤 producto (foto)");
   }
 }
 
@@ -541,7 +552,15 @@ async function handle_text(parsed, contact) {
       const prods = await find_products(tool.input.descripcion || "", 2);
       logger.info({ desc: tool.input.descripcion, encontrados: prods.length }, "🔎 mostrar_producto");
       if (!prods.length) {
-        await send_text(from, "Mi amor, déjame confirmar ese producto con Winny y te lo muestro enseguida 💕");
+        // No hay foto real en el catálogo → generar imagen con IA de la descripción.
+        // (El precio/características ya van en el texto de Claude.)
+        const url = await get_or_generate_image(tool.input.descripcion || "peluca de cabello humano");
+        if (url) {
+          const img_sid = await send_image(from, url, "");
+          logger.info({ desc: tool.input.descripcion, img_sid }, "📤 imagen generada enviada");
+        } else {
+          await send_text(from, "Mi amor, déjame confirmar ese producto con Winny y te lo muestro enseguida 💕");
+        }
       } else {
         // Respuesta inmediata + fotos en PARALELO (no una por una) para que llegue rápido
         await send_text(from, "¡Claro reina! Mira 👇✨");

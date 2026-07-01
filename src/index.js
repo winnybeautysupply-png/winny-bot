@@ -24,6 +24,9 @@ app.use("/comprobantes", express.static(config.receipts_dir));
 // Servir las facturas PDF como URL pública (para enviarlas por WhatsApp)
 app.use("/facturas", express.static(config.invoices_dir));
 
+// Servir las imágenes generadas con IA como URL pública (para enviarlas por WhatsApp)
+app.use("/generadas", express.static(config.generated_dir));
+
 // ─── Health & landing ────────────────────────────────────────────
 app.get("/", (_req, res) => {
   res.send(`

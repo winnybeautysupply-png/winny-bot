@@ -74,7 +74,18 @@ export const config = {
   // DB y storage
   db_path: optional("DB_PATH", "./data/winny-bot.db"),
   receipts_dir: optional("RECEIPTS_DIR", "./data/comprobantes"),
-  invoices_dir: optional("INVOICES_DIR", "./data/facturas")
+  invoices_dir: optional("INVOICES_DIR", "./data/facturas"),
+  generated_dir: optional("GENERATED_DIR", "./data/generadas"),
+
+  // Vertex AI Imagen — genera fotos de producto cuando NO hay foto real.
+  // Reusa la MISMA cuenta de servicio de Google (scope cloud-platform).
+  gcp: {
+    // Deriva el project id del email de la cuenta de servicio (name@PROJECT.iam.gserviceaccount.com)
+    project_id: optional("GOOGLE_PROJECT_ID", "") ||
+      ((process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || "").split("@")[1] || "").split(".")[0],
+    imagen_location: optional("IMAGEN_LOCATION", "us-central1"),
+    imagen_model: optional("IMAGEN_MODEL", "imagen-3.0-generate-002")
+  }
 };
 
 // Helper: ¿está abierto el negocio ahora?
