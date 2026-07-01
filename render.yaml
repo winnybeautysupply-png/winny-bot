@@ -46,6 +46,13 @@ services:
         sync: false
       - key: LOG_LEVEL
         value: info
+      # ── Guardar TODO en el disco persistente (/app/data) para que NO se borre en reinicios/deploys ──
+      - key: DB_PATH
+        value: /app/data/winny-bot.db
+      - key: RECEIPTS_DIR
+        value: /app/data/comprobantes
+      - key: INVOICES_DIR
+        value: /app/data/facturas
     disk:
       name: winny-data
       mountPath: /app/data
