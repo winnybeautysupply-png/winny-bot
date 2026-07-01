@@ -107,11 +107,13 @@ async function send_product(to, p) {
   if (p.colores) lines.push(`🎨 Colores: ${p.colores}`);
   if (p.oferta) lines.push(`🔥 ¡EN OFERTA!`);
   const caption = lines.join("\n");
+  // EL PRECIO SIEMPRE VA POR TEXTO (garantizado). La foto es un extra best-effort:
+  // así, aunque Twilio no entregue la imagen, la clienta SIEMPRE recibe nombre + precio.
+  const txt_sid = await send_text(to, caption);
+  logger.info({ to, prod: p.nombre, precio: p.precio_detalle, txt_sid }, "📤 producto (texto)");
   if (p.media_url && p.media_url.startsWith("http")) {
-    const sid = await send_image(to, fast_media_url(p.media_url), caption);
-    if (!sid) await send_text(to, caption); // si el media falla, al menos mandar el texto
-  } else {
-    await send_text(to, caption);
+    const img_sid = await send_image(to, fast_media_url(p.media_url), "");
+    logger.info({ to, prod: p.nombre, img_sid }, "📤 producto (foto)");
   }
 }
 
@@ -466,6 +468,12 @@ async function handle_text(parsed, contact) {
 
   // Llamar a Claude
   const ai = await generate_response(text, history, ctx);
+  logger.info({
+    from,
+    msg: (text || "").slice(0, 80),
+    tools: (ai.tool_calls || []).map(t => t.name),
+    text_preview: (ai.text || "").slice(0, 160)
+  }, "🤖 Claude respondió");
 
   // Procesar tool calls si los hay.
   // Envuelto en try: si un tool falla (ej. envío de foto), NO debe impedir
@@ -531,6 +539,7 @@ async function handle_text(parsed, contact) {
       ]).catch(err => logger.error({ err: err.message }, "Sheets append falló"));
     } else if (tool.name === "mostrar_producto") {
       const prods = await find_products(tool.input.descripcion || "", 2);
+      logger.info({ desc: tool.input.descripcion, encontrados: prods.length }, "🔎 mostrar_producto");
       if (!prods.length) {
         await send_text(from, "Mi amor, déjame confirmar ese producto con Winny y te lo muestro enseguida 💕");
       } else {
