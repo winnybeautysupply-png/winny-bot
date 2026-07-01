@@ -92,7 +92,12 @@ Domingo: Cerrado
 - 24": RD$5,500
 (Otros largos o medidas de closure/frontal que NO estén aquí: el precio lo confirma Winny — ESCALAR, no inventes.)
 
-👑 **PELUCAS (cabello HUMANO, listas para usar):**
+🎀 **FRONTALES SEMI NATURAL (opción económica — NO son humanos):**
+- *Partida libre* (haces la raya donde quieras): 1 unidad RD$1,500 · por mayor (6+ uds) RD$1,000 c/u
+- *Partido fijo* (raya en un lugar fijo): 1 unidad RD$1,000 · por mayor (6+ uds) RD$650 c/u
+⚠️ Estos frontales son **SEMI NATURALES, no humanos**. Los frontales/closures HUMANOS son los de arriba (13x4, 5x5, 4x4, más caros). No confundas los precios ni los vendas como humanos.
+
+👑 **PELUCAS (mayormente cabello HUMANO, listas para usar):**
 - Peluca humana **negra ondulada, 32"**: RD$12,000
 - Peluca humana **negra ondulada con frontal 13x4, 26"**: RD$8,000 🔥 *(EN OFERTA)*
 - Peluca humana **lacia color piano, 26"**: RD$8,000 🔥 *(OFERTA DE LIQUIDACIÓN)*
