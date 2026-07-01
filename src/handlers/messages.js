@@ -467,7 +467,10 @@ async function handle_text(parsed, contact) {
   // Llamar a Claude
   const ai = await generate_response(text, history, ctx);
 
-  // Procesar tool calls si los hay
+  // Procesar tool calls si los hay.
+  // Envuelto en try: si un tool falla (ej. envío de foto), NO debe impedir
+  // que enviemos el texto con los precios más abajo.
+  try {
   for (const tool of ai.tool_calls) {
     if (tool.name === "escalar_a_winny") {
       set_handoff(from, 60); // 1 hora de handoff
@@ -544,6 +547,9 @@ async function handle_text(parsed, contact) {
         await Promise.all(offers.slice(0, 6).map(p => send_product(from, p)));
       }
     }
+  }
+  } catch (err) {
+    logger.error({ err: err.message, from }, "Fallo ejecutando tool_calls; envío el texto de todas formas");
   }
 
   // Enviar respuesta de texto al cliente
