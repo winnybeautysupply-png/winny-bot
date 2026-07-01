@@ -310,13 +310,24 @@ async function handle_image(parsed, contact) {
   if (["peluca_producto", "cabello_peinado", "persona_con_peluca", "captura_producto", "maniqui"].includes(cat)) {
     logger.info({ from, cat }, "🖼️→ ruta: RECOMENDACIÓN por imagen");
     const a = cls.atributos_cabello || {};
-    const attrs = [a.tipo, a.textura, a.color, a.largo].filter(Boolean).join(", ");
+    // (1) Buscar coincidencias REALES en el catálogo por los atributos detectados y enviarlas (foto+precio).
+    //     Determinístico: no depende de que la IA "decida" llamar la herramienta.
+    const query = [a.textura, a.color, a.largo, "peluca"].filter(Boolean).join(" ") || cls.descripcion || "peluca";
+    const matches = await find_products(query, 2);
+    logger.info({ from, query, coincidencias: matches.length }, "🔎 recomendación por foto");
+    if (matches.length) {
+      const attrs = [a.textura, a.color, a.largo].filter(Boolean).join(" ");
+      await send_text(from, `¡Qué linda foto reina! 💕 ${attrs ? `Veo un cabello ${attrs}. ` : ""}Mira las que más se parecen de nuestro catálogo 👇✨`);
+      await Promise.all(matches.map(p => send_product(from, p)));
+      await send_text(from, "¿Te gustó alguna? Dime cuál y te ayudo a que la tuya salga hoy mismo 🛍️💖");
+      return;
+    }
+    // (2) Sin coincidencia con foto real → flujo conversacional (recomienda por texto / puede generar imagen).
+    const attrs2 = [a.tipo, a.textura, a.color, a.largo].filter(Boolean).join(", ");
     const synth =
-      `[La clienta me envió una FOTO. Análisis de visión: ${cls.descripcion}` +
-      `${attrs ? ` (cabello visible: ${attrs})` : ""}. ` +
-      `DEBES, en ESTE mismo mensaje: (1) comentar con cariño lo que se ve, y (2) nombrar 2-3 pelucas/cabello del catálogo MÁS PARECIDAS ` +
-      `CON SU PRECIO (ej: "se parece a nuestra Peluca rizada 28\" — RD$9,000"). 🚫 PROHIBIDO responder solo "déjame mostrarte" o "ahora mismo" ` +
-      `sin dar los nombres y precios. Usa también mostrar_producto para enviar fotos, pero los nombres+precios van en el texto.]`;
+      `[La clienta me envió una FOTO. Análisis de visión: ${cls.descripcion}${attrs2 ? ` (cabello visible: ${attrs2})` : ""}. ` +
+      `DEBES en ESTE mensaje: comentar con cariño lo que se ve y recomendarle 2-3 pelucas del catálogo MÁS PARECIDAS CON SU PRECIO ` +
+      `(ej: "se parece a nuestra Peluca rizada 28\" — RD$9,000"). 🚫 PROHIBIDO responder solo "déjame mostrarte" o "ahora mismo".]`;
     await handle_text({ ...parsed, type: "text", text: synth }, contact);
     return;
   }
