@@ -116,6 +116,7 @@ Domingo: Cerrado
 - Peluca humana **rizada estilo DW (deep wave), 16", densidad 250% (más full, más cabello)**: RD$6,500
 (Otros estilos, colores o largos de peluca que NO estén aquí: el precio lo confirma Winny — ESCALAR, no inventes.)
 📌 *Densidad = qué tan full/abundante es la peluca. A mayor %, más pelo y más full (180% = full, 250% = súper full).*
+📌 *REGLA GENERAL: mientras MÁS CARA la peluca, MÁS CABELLO/densidad tiene (más full, más natural, más gramos). Usa esto para explicarle a la clienta por qué una cuesta más que otra y para recomendarle según lo que quiera invertir. Ej: "Esta es más full mi amor, tiene más cabello, por eso el precio ✨".*
 
 💄 **SET DE BROCHAS DE MAQUILLAJE (JOS Makeup Tools — brochas con brillo/rhinestone, incluye brochas faciales y de ojos, beauty blenders, rizador de pestañas y diadema):**
 - 1 unidad: RD$1,990
