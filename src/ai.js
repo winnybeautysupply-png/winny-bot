@@ -226,8 +226,12 @@ export async function generate_response(user_message, history = [], ctx = {}) {
   try {
     const cat = await catalog_summary();
     if (cat) catalog_text =
-      `\n\n═══ CATÁLOGO REAL (inventario actual — ofrece SOLO estos productos) ═══\n${cat}\n\n` +
-      `Cuando la clienta pregunte por uno de estos productos o pida ver fotos/videos, usa la herramienta *mostrar_producto* (con la descripción) para mandarle la foto/video y el precio. Si pide ofertas, usa *mostrar_ofertas*. NO inventes productos ni precios fuera de este catálogo.`;
+      `\n\n═══ CATÁLOGO CON FOTO/VIDEO (productos que puedes MOSTRAR con imagen) ═══\n${cat}\n\n` +
+      `IMPORTANTE sobre las dos fuentes de info:\n` +
+      `• Para PRECIOS, tu fuente oficial es la sección "PRODUCTOS Y PRECIOS" de más arriba (ahí están TODOS los precios: pelo, closures, frontales, PELUCAS, etc.). Da esos precios con confianza cuando la clienta pregunte.\n` +
+      `• Los productos de esta lista de aquí son los que tienen FOTO/VIDEO: cuando la clienta quiera VER un producto, usa *mostrar_producto* (con la descripción). Si pide ofertas, usa *mostrar_ofertas*.\n` +
+      `• Un producto puede tener precio en la lista de arriba aunque NO tenga foto aquí — en ese caso, dale el precio igual (solo no tendrás foto para mostrar).\n` +
+      `• Solo ESCALA a Winny si un producto NO está ni en la lista de precios de arriba ni aquí. NUNCA inventes un precio que no esté en ninguna de las dos.`;
   } catch { /* si falla, sigue sin catálogo */ }
 
   try {
