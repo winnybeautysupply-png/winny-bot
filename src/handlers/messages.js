@@ -14,7 +14,7 @@ import {
   set_handoff, is_handed_off,
   get_active_order, create_order, update_order,
   get_pending_verification, get_latest_pending_verification,
-  get_customer_orders
+  get_customer_orders, set_shipping
 } from "../db.js";
 import { generate_response, extract_order_from_chat, generate_owner_response, analyze_image } from "../ai.js";
 import { append_order_row } from "../sheets.js";
@@ -46,19 +46,27 @@ function extract_phone(text) {
   return (d.length === 11 && d[0] === "1") ? d : null;
 }
 
-// Reenvía un recibo de ENVÍO (paquetería) a una clienta para que retire su pedido.
-async function forward_shipping_receipt(to, image_url) {
+// Reenvía un recibo de ENVÍO a una clienta, guarda la guía/empresa en su pedido
+// (estado 'shipped') y le avisa que su pedido ya salió.
+async function forward_shipping_receipt(to, image_url, envio = {}) {
+  const empresa = envio.empresa || "";
+  const guia = envio.guia || "";
+  const detalle = [empresa ? `📦 Empresa: *${empresa}*` : "", guia ? `🔢 Guía: *${guia}*` : ""].filter(Boolean).join("\n");
   const msg =
-    "¡Hola reina! 💕 ¡Tu pedido ya va en camino! 📦✨\n\n" +
-    "Aquí te dejo el recibo para que RETIRES tu paquete en la empresa de envío (fíjate en el recibo dónde retirarlo y el número de guía). " +
-    "¡Gracias por tu compra mi amor! 🛍️💖";
+    "¡Hola reina! 💕 ¡Tu pedido ya fue enviado y va en camino! 📦✨\n\n" +
+    (detalle ? detalle + "\n\n" : "") +
+    "Aquí te dejo el recibo para que RETIRES tu paquete en la sucursal correspondiente" +
+    (guia ? " con ese número de guía" : " (usa el número de guía del recibo)") +
+    ". ¡Gracias por tu compra mi amor! 🛍️💖";
   const sid = await send_image(to, image_url, msg);
   if (!sid) await send_text(to, msg);
-  save_message({ phone: to, direction: "out", type: "image", content: "[recibo de envío reenviado]", media_path: null, wa_message_id: sid });
-  logger.info({ to, sid }, "📦 recibo de envío reenviado a la clienta");
+  // Guardar el recibo en la conversación de ESA clienta + marcar pedido como enviado
+  save_message({ phone: to, direction: "out", type: "image", content: `[recibo de envío reenviado${empresa ? " — " + empresa : ""}${guia ? " — guía " + guia : ""}]`, media_path: null, wa_message_id: sid });
+  try { set_shipping(to, { guia, empresa }); } catch (e) { logger.error({ err: e.message }, "no pude guardar envío"); }
+  logger.info({ to, empresa, guia, sid }, "📦 recibo de envío reenviado + pedido marcado como enviado");
 }
 
-// Winny (dueña) manda una FOTO (recibo de envío) desde su número → reenviarla a la clienta.
+// Winny (dueña) manda una FOTO (recibo de envío) desde su número → leerla y reenviarla a la clienta.
 async function handle_owner_image(parsed) {
   const { from, media_url, mime, caption } = parsed;
   const owner = config.business.owner_phone;
@@ -69,16 +77,26 @@ async function handle_owner_image(parsed) {
   if (!dl) { await send_text(owner, "No me llegó bien la imagen jefa 😅 ¿me la reenvías?"); return; }
   const public_url = `${config.public_base_url}/comprobantes/${filename}`;
 
+  // Leer el recibo con OCR para extraer empresa + guía (para incluirlos en el mensaje a la clienta)
+  let envio = {};
+  try {
+    const b64 = fs.readFileSync(save_to).toString("base64");
+    const media_type = (dl.mime || mime || "image/jpeg").split(";")[0];
+    const cls = await analyze_image(b64, media_type, []);
+    envio = cls?.datos_envio || {};
+    logger.info({ empresa: envio.empresa, guia: envio.guia }, "📦 recibo de envío leído (OCR)");
+  } catch (e) { logger.error({ err: e.message }, "no pude leer el recibo de envío"); }
+
   const target = extract_phone(caption);
   if (target) {
     last_owner_receipt = null;
-    await forward_shipping_receipt(target, public_url);
-    await send_text(owner, `✅ Listo jefa, le reenvié el recibo de envío a la clienta +${target} 📦💕`);
+    await forward_shipping_receipt(target, public_url, envio);
+    await send_text(owner, `✅ Listo jefa, le reenvié el recibo a la clienta +${target} 📦${envio.empresa ? " (" + envio.empresa + ")" : ""}${envio.guia ? " guía " + envio.guia : ""} 💕`);
   } else {
-    // No vino el número en la foto → guardar y pedirlo
-    last_owner_receipt = { url: public_url };
+    // No vino el número en la foto → guardar (con la guía leída) y pedir el número
+    last_owner_receipt = { url: public_url, envio };
     await send_text(owner,
-      "📦 Recibí el recibo de envío jefa. ¿A cuál clienta se lo reenvío? Mándame el número (ej: 8091234567) y se lo envío de una vez 💕");
+      `📦 Recibí el recibo de envío jefa${envio.empresa ? ` (${envio.empresa}${envio.guia ? ", guía " + envio.guia : ""})` : ""}. ¿A cuál clienta se lo reenvío? Mándame el número (ej: 8091234567) 💕`);
   }
 }
 
@@ -112,7 +130,12 @@ function summarize_orders(orders) {
       .join(", ");
     let fecha = "";
     try { fecha = new Date(o.created_at).toLocaleDateString("es-DO", { timeZone: config.business.timezone }); } catch {}
-    return `- ${fecha ? fecha + ": " : ""}${prods}${o.total ? ` — RD$${rd(o.total)}` : ""}`;
+    const estados = { paid: "pagado", shipped: "enviado", awaiting_verification: "esperando confirmación de pago", awaiting_payment: "pendiente de pago" };
+    const estado = estados[o.status] || o.status;
+    const envio = o.status === "shipped"
+      ? ` [ENVIADO${o.empresa_envio ? " por " + o.empresa_envio : ""}${o.guia_envio ? ", guía " + o.guia_envio : ""}]`
+      : ` [${estado}]`;
+    return `- ${fecha ? fecha + ": " : ""}${prods}${o.total ? ` — RD$${rd(o.total)}` : ""}${envio}`;
   }).filter(Boolean);
   return lines.join("\n");
 }
@@ -179,8 +202,8 @@ async function send_product(to, p) {
 
 // ═══ Handler de IMAGEN — VISIÓN primero, luego decide la acción ══════════
 
-// Flujo de verificación de PAGO (solo cuando la imagen ES un comprobante). Reusable.
-async function process_payment_receipt(parsed, contact, save_to, filename) {
+// Flujo de verificación de PAGO (solo cuando la imagen ES un comprobante bancario).
+async function process_payment_receipt(parsed, contact, save_to, filename, cls = null) {
   const { from } = parsed;
   const order = get_active_order(from);
   if (order) update_order(order.id, { receipt_path: save_to, status: "awaiting_verification" });
@@ -190,6 +213,15 @@ async function process_payment_receipt(parsed, contact, save_to, filename) {
     `¡Recibí tu comprobante mi amor! 💕✨\n\nWinny verifica que el pago haya llegado y te confirmamos enseguida para preparar tu pedido 🛍️`);
   try {
     const public_url = `${config.public_base_url}/comprobantes/${filename}`;
+    // Datos leídos del comprobante con OCR (banco, monto, fecha, referencia, remitente)
+    const d = cls?.datos_pago || {};
+    const datos = [
+      d.banco ? `🏦 Banco: ${d.banco}` : "",
+      d.monto ? `💵 Monto: ${d.monto}` : "",
+      d.fecha ? `📅 Fecha: ${d.fecha}` : "",
+      d.referencia ? `🔢 Ref: ${d.referencia}` : "",
+      d.remitente ? `👤 De: ${d.remitente}` : ""
+    ].filter(Boolean).join("\n");
     const hint =
       `\n\n¿Llegó el pago, reina? 👇\n` +
       `✅ Si LLEGÓ, respóndeme:  *confirmar +${from}*\n` +
@@ -198,7 +230,8 @@ async function process_payment_receipt(parsed, contact, save_to, filename) {
     await send_image(
       config.business.owner_phone,
       public_url,
-      `💰 *Comprobante de pago recibido*\n📱 Cliente: +${from}${contact?.name ? ` (${contact.name})` : ""}${order ? `\n🧾 Pedido #${order.id}` : ""}${hint}`
+      `💰 *Comprobante de pago recibido*\n📱 Cliente: +${from}${contact?.name ? ` (${contact.name})` : ""}${order ? `\n🧾 Pedido #${order.id}` : ""}` +
+      `${datos ? `\n\n${datos}` : ""}${hint}`
     );
   } catch (err) {
     logger.error({ err: err.message }, "Error reenviando comprobante");
@@ -254,17 +287,22 @@ async function handle_image(parsed, contact) {
     return;
   }
 
-  // 3) COMPROBANTE BANCARIO (pago) → flujo de verificación de pago.
+  // 3) COMPROBANTE BANCARIO (pago) → flujo de verificación de pago (con datos OCR).
   if ((cls.es_pago || cat === "comprobante_bancario") && !cls.es_recibo_envio && conf >= 0.5) {
-    logger.info({ from }, "🖼️→ ruta: COMPROBANTE BANCARIO (pago)");
-    await process_payment_receipt(parsed, contact, save_to, filename);
+    logger.info({ from, datos_pago: cls.datos_pago }, "🖼️→ ruta: COMPROBANTE BANCARIO (pago)");
+    await process_payment_receipt(parsed, contact, save_to, filename, cls);
     return;
   }
 
-  // 3b) RECIBO DE ENVÍO / PAQUETERÍA que manda una clienta (raro) → acusar recibo, NO es pago.
+  // 3b) RECIBO DE ENVÍO / PAQUETERÍA que manda una clienta → responder con la guía, NO es pago.
   if (cls.es_recibo_envio || cat === "recibo_envio") {
-    logger.info({ from }, "🖼️→ ruta: recibo de ENVÍO (de clienta)");
-    await send_text(from, "¡Gracias reina! 💕 Recibí tu recibo de envío. Si necesitas algo con tu pedido o quieres coordinar el retiro, dime 📦✨");
+    const e = cls.datos_envio || {};
+    logger.info({ from, datos_envio: e }, "🖼️→ ruta: recibo de ENVÍO (de clienta)");
+    const detalle = [e.empresa ? `empresa *${e.empresa}*` : "", e.guia ? `guía *${e.guia}*` : ""].filter(Boolean).join(", ");
+    await send_text(from,
+      `¡Este es el recibo de envío de tu pedido reina! 📦✨ ` +
+      (detalle ? `Con ${detalle} puedes retirarlo en la sucursal correspondiente. ` : `Puedes usar el número de guía para retirarlo en la sucursal correspondiente. `) +
+      `Cualquier cosa con tu retiro, aquí estoy 💕`);
     return;
   }
 
@@ -399,7 +437,7 @@ async function handle_owner_command(parsed) {
   if (last_owner_receipt) {
     const t = extract_phone(parsed.text);
     if (t) {
-      await forward_shipping_receipt(t, last_owner_receipt.url);
+      await forward_shipping_receipt(t, last_owner_receipt.url, last_owner_receipt.envio || {});
       await send_text(config.business.owner_phone, `✅ Reenviado el recibo de envío a la clienta +${t} 📦💕`);
       last_owner_receipt = null;
       return true;

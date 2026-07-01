@@ -159,11 +159,32 @@ const IMAGE_CLASSIFY_TOOL = {
         description: "Solo si se ve cabello/peluca",
         properties: {
           color: { type: "string" }, textura: { type: "string", description: "lacio/ondulado/rizado" },
-          largo: { type: "string" }, tipo: { type: "string", description: "humano, sintético, piano, etc." }
+          largo: { type: "string" }, tipo: { type: "string", description: "humano, sintético, piano, etc." },
+          lace: { type: "string", description: "tipo de lace/frontal si se ve: 13x4, 5x5, 4x4, closure, etc." },
+          densidad: { type: "string", description: "densidad aproximada si se aprecia: 150%, 180%, 250%, etc." },
+          estilo: { type: "string", description: "estilo/peinado visible" }
+        }
+      },
+      datos_pago: {
+        type: "object",
+        description: "SOLO si es un comprobante bancario: extrae estos datos del texto (OCR)",
+        properties: {
+          banco: { type: "string" }, monto: { type: "string" }, fecha: { type: "string" },
+          referencia: { type: "string", description: "número de referencia/confirmación/transacción" },
+          remitente: { type: "string", description: "nombre de quien envió el pago si aparece" }
+        }
+      },
+      datos_envio: {
+        type: "object",
+        description: "SOLO si es un recibo de envío/paquetería: extrae estos datos del texto (OCR)",
+        properties: {
+          empresa: { type: "string", description: "empresa de envío: Caribe Tours, Vimenca/Vimenpaq, Metro, Transporte Espinal, autobús, etc." },
+          guia: { type: "string", description: "número de guía/tracking/factura de envío" },
+          destino: { type: "string", description: "sucursal o ciudad de destino/retiro si aparece" }
         }
       },
       es_pago: { type: "boolean", description: "true SOLO si es un comprobante/transferencia/depósito BANCARIO de PAGO (dinero). FALSE para recibos de paquetería/envío." },
-      es_recibo_envio: { type: "boolean", description: "true si es un recibo/guía de una empresa de ENVÍO o paquetería (Caribe Tours, Vimenpaq, paquetería de autobús, Caribe Pack, etc.) — NO es un pago bancario." },
+      es_recibo_envio: { type: "boolean", description: "true si es un recibo/guía de una empresa de ENVÍO o paquetería (Caribe Tours, Vimenca/Vimenpaq, Metro, Transporte Espinal, autobús, etc.) — NO es un pago bancario." },
       confianza: { type: "number", description: "0 a 1, qué tan seguro estás de la categoría" }
     },
     required: ["categoria", "descripcion", "es_pago", "confianza"]
@@ -193,7 +214,7 @@ export async function analyze_image(base64, media_type = "image/jpeg", history =
       model: config.claude.model,
       max_tokens: 500,
       temperature: 0,
-      system: "Eres un clasificador de visión para el WhatsApp de Winny Beauty Supply (tienda de pelucas y cabello humano en RD). Analizas imágenes que mandan las clientas y las clasificas con precisión. NO asumas que todo es un comprobante de pago. DISTINGUE bien: (a) COMPROBANTE BANCARIO = una transferencia, depósito o pago por banco (app bancaria, montos en RD$, banco Popular/BHD/Reservas/etc.) → es_pago=true. (b) RECIBO DE ENVÍO = una guía o recibo de una empresa de paquetería para retirar un paquete (Caribe Tours, Vimenpaq, paquetería de autobús, Caribe Pack, Metro) → es_recibo_envio=true, es_pago=false. Son documentos DISTINTOS, no los confundas.",
+      system: "Eres un clasificador de visión con OCR para el WhatsApp de Winny Beauty Supply (tienda de pelucas y cabello humano en RD). LEE todo el texto de la imagen y úsalo para clasificarla con precisión. NO asumas que todo es un comprobante de pago. DISTINGUE bien: (a) COMPROBANTE BANCARIO = una transferencia, depósito o pago por banco (app bancaria, montos en RD$, banco Popular/BHD/Reservas/Banreservas/APAP/etc.) → es_pago=true; extrae banco, monto, fecha, referencia y remitente en datos_pago. (b) RECIBO DE ENVÍO = una guía o recibo de una empresa de paquetería para retirar un paquete (Caribe Tours, Vimenca/Vimenpaq, Metro, Transporte Espinal, paquetería de autobús, Caribe Pack) → es_recibo_envio=true, es_pago=false; extrae empresa y número de guía en datos_envio. Son documentos DISTINTOS, JAMÁS los confundas. Si ves una peluca/cabello, describe color, largo, textura, lace y densidad.",
       tools: [IMAGE_CLASSIFY_TOOL],
       tool_choice: { type: "tool", name: "clasificar_imagen" },
       messages

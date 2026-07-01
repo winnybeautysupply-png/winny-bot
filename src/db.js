@@ -87,6 +87,11 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_orders_phone ON orders(phone, status);
 `);
 
+// Migraciones: columnas de envío en orders (si aún no existen)
+for (const col of ["guia_envio TEXT", "empresa_envio TEXT"]) {
+  try { db.exec(`ALTER TABLE orders ADD COLUMN ${col}`); } catch { /* la columna ya existe */ }
+}
+
 // Chequeo vivo de la DB para /health (consulta trivial).
 export function db_healthy() {
   try { return db.prepare("SELECT 1 AS ok").get()?.ok === 1; } catch { return false; }
@@ -178,15 +183,34 @@ export function get_order(id) {
   return db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
 }
 
-// Historial de COMPRAS confirmadas de una clienta — para que el bot la
-// reconozca cuando vuelve y recuerde qué compró (aunque haya pasado tiempo).
-export function get_customer_orders(phone, limit = 6) {
+// Historial de COMPRAS de una clienta — para que el bot la reconozca cuando
+// vuelve y recuerde qué compró, su estado y su envío (aunque haya pasado tiempo).
+export function get_customer_orders(phone, limit = 8) {
   return db.prepare(`
-    SELECT items, total, status, created_at
+    SELECT items, total, status, guia_envio, empresa_envio, created_at
     FROM orders
-    WHERE phone = ? AND status = 'paid'
+    WHERE phone = ? AND status IN ('paid','shipped','awaiting_verification','awaiting_payment')
     ORDER BY created_at DESC LIMIT ?
   `).all(phone, limit);
+}
+
+// Marca el pedido de una clienta como ENVIADO y guarda guía + empresa de envío.
+// Devuelve el id del pedido actualizado, o null si no había pedido.
+export function set_shipping(phone, { guia = null, empresa = null } = {}) {
+  const order = db.prepare(`
+    SELECT id FROM orders
+    WHERE phone = ? AND status IN ('paid','awaiting_verification','awaiting_payment','shipped','draft')
+    ORDER BY created_at DESC LIMIT 1
+  `).get(phone);
+  if (!order) return null;
+  db.prepare(`
+    UPDATE orders SET status='shipped',
+      guia_envio = COALESCE(?, guia_envio),
+      empresa_envio = COALESCE(?, empresa_envio),
+      updated_at = ?
+    WHERE id = ?
+  `).run(guia, empresa, Date.now(), order.id);
+  return order.id;
 }
 
 // Pedido de un cliente esperando que Winny verifique el pago
