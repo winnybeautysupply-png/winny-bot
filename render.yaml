@@ -31,7 +31,7 @@ services:
       - key: CLAUDE_MODEL
         value: claude-sonnet-4-6
       - key: OWNER_PHONE
-        value: "18293839433"
+        value: "18496219899"
       - key: BUSINESS_NAME
         value: Winny Beauty Supply
       - key: TZ
