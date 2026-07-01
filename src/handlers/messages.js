@@ -91,6 +91,14 @@ async function send_bank_accounts(to) {
   return send_text(to, msg);
 }
 
+// Optimiza la imagen de Cloudinary para envío RÁPIDO y compatible con WhatsApp:
+// fuerza JPG (WhatsApp no siempre acepta WebP), comprime y limita el ancho a 1080px.
+// Menos peso = Twilio la busca y la entrega mucho más rápido.
+function fast_media_url(url) {
+  if (!url || !url.includes("res.cloudinary.com/")) return url;
+  return url.replace("/upload/f_auto,q_auto/", "/upload/f_jpg,q_auto:good,w_1080/");
+}
+
 // ═══ Enviar un producto del catálogo (foto/video Cloudinary + precio) ═══
 async function send_product(to, p) {
   const lines = [`🛍️ *${p.nombre}*`, `💵 RD$${rd(p.precio_detalle)}`];
@@ -100,7 +108,7 @@ async function send_product(to, p) {
   if (p.oferta) lines.push(`🔥 ¡EN OFERTA!`);
   const caption = lines.join("\n");
   if (p.media_url && p.media_url.startsWith("http")) {
-    const sid = await send_image(to, p.media_url, caption);
+    const sid = await send_image(to, fast_media_url(p.media_url), caption);
     if (!sid) await send_text(to, caption); // si el media falla, al menos mandar el texto
   } else {
     await send_text(to, caption);
@@ -523,7 +531,9 @@ async function handle_text(parsed, contact) {
       if (!prods.length) {
         await send_text(from, "Mi amor, déjame confirmar ese producto con Winny y te lo muestro enseguida 💕");
       } else {
-        for (const p of prods) await send_product(from, p);
+        // Respuesta inmediata + fotos en PARALELO (no una por una) para que llegue rápido
+        await send_text(from, "¡Claro reina! Mira 👇✨");
+        await Promise.all(prods.map(p => send_product(from, p)));
       }
     } else if (tool.name === "mostrar_ofertas") {
       const offers = await get_offers();
@@ -531,7 +541,7 @@ async function handle_text(parsed, contact) {
         await send_text(from, "Ahora mismo no tengo ofertas activas mi amor 💕 pero dime qué buscas y te doy el mejor precio ✨");
       } else {
         await send_text(from, "¡Mira nuestras ofertas, mi amor! 🔥");
-        for (const p of offers.slice(0, 6)) await send_product(from, p);
+        await Promise.all(offers.slice(0, 6).map(p => send_product(from, p)));
       }
     }
   }
