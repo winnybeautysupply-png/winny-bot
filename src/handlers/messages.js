@@ -14,7 +14,8 @@ import {
   set_handoff, is_handed_off,
   get_active_order, create_order, update_order,
   get_pending_verification, get_latest_pending_verification,
-  get_customer_orders, set_shipping
+  get_customer_orders, set_shipping,
+  find_duplicate_payment, record_payment
 } from "../db.js";
 import { generate_response, extract_order_from_chat, generate_owner_response, analyze_image } from "../ai.js";
 import { append_order_row } from "../sheets.js";
@@ -222,6 +223,19 @@ async function process_payment_receipt(parsed, contact, save_to, filename, cls =
       d.referencia ? `🔢 Ref: ${d.referencia}` : "",
       d.remitente ? `👤 De: ${d.remitente}` : ""
     ].filter(Boolean).join("\n");
+    // DETECCIÓN DE FRAUDE: ¿referencia/monto ya usados antes?
+    let alerta = "";
+    if (d.referencia || (d.monto && d.banco)) {
+      try {
+        const dup = find_duplicate_payment({ referencia: d.referencia, monto: d.monto, banco: d.banco });
+        if (dup) {
+          alerta = `\n\n⚠️ *ALERTA DE REVISIÓN:* este comprobante tiene la ${dup.reason}` +
+            `${dup.phone && dup.phone !== from ? ` (antes por +${dup.phone})` : " (repetido)"}. VERIFICA bien antes de confirmar.`;
+          logger.warn({ from, reason: dup.reason }, "🚨 posible comprobante fraudulento");
+        }
+        record_payment({ phone: from, referencia: d.referencia, monto: d.monto, banco: d.banco, fecha: d.fecha });
+      } catch (e) { logger.error({ err: e.message }, "error en chequeo de fraude"); }
+    }
     const hint =
       `\n\n¿Llegó el pago, reina? 👇\n` +
       `✅ Si LLEGÓ, respóndeme:  *confirmar +${from}*\n` +
@@ -231,7 +245,7 @@ async function process_payment_receipt(parsed, contact, save_to, filename, cls =
       config.business.owner_phone,
       public_url,
       `💰 *Comprobante de pago recibido*\n📱 Cliente: +${from}${contact?.name ? ` (${contact.name})` : ""}${order ? `\n🧾 Pedido #${order.id}` : ""}` +
-      `${datos ? `\n\n${datos}` : ""}${hint}`
+      `${datos ? `\n\n${datos}` : ""}${alerta}${hint}`
     );
   } catch (err) {
     logger.error({ err: err.message }, "Error reenviando comprobante");

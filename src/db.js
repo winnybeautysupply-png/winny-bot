@@ -92,6 +92,20 @@ for (const col of ["guia_envio TEXT", "empresa_envio TEXT"]) {
   try { db.exec(`ALTER TABLE orders ADD COLUMN ${col}`); } catch { /* la columna ya existe */ }
 }
 
+// Registro de comprobantes de pago recibidos — para DETECTAR FRAUDE (referencias repetidas).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    phone TEXT,
+    referencia TEXT,
+    monto TEXT,
+    banco TEXT,
+    fecha TEXT,
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_payments_ref ON payments(referencia);
+`);
+
 // Chequeo vivo de la DB para /health (consulta trivial).
 export function db_healthy() {
   try { return db.prepare("SELECT 1 AS ok").get()?.ok === 1; } catch { return false; }
@@ -192,6 +206,26 @@ export function get_customer_orders(phone, limit = 8) {
     WHERE phone = ? AND status IN ('paid','shipped','awaiting_verification','awaiting_payment')
     ORDER BY created_at DESC LIMIT ?
   `).all(phone, limit);
+}
+
+// FRAUDE: busca un comprobante previo con la MISMA referencia (o mismo monto+banco).
+// Devuelve {reason, phone, created_at} si es sospechoso, o null.
+export function find_duplicate_payment({ referencia = null, monto = null, banco = null } = {}) {
+  if (referencia && referencia.replace(/\D/g, "").length >= 4) {
+    const r = db.prepare("SELECT phone, created_at FROM payments WHERE referencia = ? ORDER BY created_at DESC LIMIT 1").get(referencia);
+    if (r) return { reason: "misma REFERENCIA bancaria ya usada", phone: r.phone, created_at: r.created_at };
+  }
+  if (monto && banco) {
+    const r = db.prepare("SELECT phone, created_at FROM payments WHERE monto = ? AND banco = ? ORDER BY created_at DESC LIMIT 1").get(monto, banco);
+    if (r) return { reason: "mismo MONTO y BANCO ya registrados", phone: r.phone, created_at: r.created_at };
+  }
+  return null;
+}
+
+// Registra un comprobante recibido (para futuras comparaciones de fraude).
+export function record_payment({ phone, referencia = null, monto = null, banco = null, fecha = null }) {
+  db.prepare("INSERT INTO payments (phone, referencia, monto, banco, fecha, created_at) VALUES (?,?,?,?,?,?)")
+    .run(phone, referencia, monto, banco, fecha, Date.now());
 }
 
 // Marca el pedido de una clienta como ENVIADO y guarda guía + empresa de envío.
