@@ -6,12 +6,36 @@ import fs from "fs";
 import path from "path";
 import { config } from "./config.js";
 
-// Asegura que la carpeta exista
-const dir = path.dirname(config.db_path);
-if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-if (!fs.existsSync(config.receipts_dir)) fs.mkdirSync(config.receipts_dir, { recursive: true });
+// Crea una carpeta si se puede; devuelve true/false SIN lanzar (para no tumbar el arranque).
+function ensure_dir(dir) {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.accessSync(dir, fs.constants.W_OK);
+    return true;
+  } catch (e) {
+    console.error(`⚠️  No pude usar/crear la carpeta "${dir}": ${e.message}`);
+    return false;
+  }
+}
 
-const db = new Database(config.db_path);
+// Resuelve una ruta de DB USABLE. Intenta la configurada (disco persistente /app/data);
+// si el disco no está montado o no es escribible, cae a ./data local para que el bot
+// NO se caiga. Último recurso: DB en memoria (responde, aunque no persista).
+function resolve_db_path() {
+  for (const p of [config.db_path, "./data/winny-bot.db"]) {
+    if (ensure_dir(path.dirname(p))) {
+      if (p !== config.db_path) console.error(`⚠️  Usando ruta de DB de respaldo: ${p} (revisa el disco persistente)`);
+      return p;
+    }
+  }
+  console.error("⚠️  DB en MEMORIA: el bot responde pero NO persiste. Revisa el disco de Render.");
+  return ":memory:";
+}
+
+// Carpeta de comprobantes (no crítica para el arranque: si falla, se avisa y sigue)
+ensure_dir(config.receipts_dir);
+
+const db = new Database(resolve_db_path());
 db.pragma("journal_mode = WAL");
 
 // ─── Esquema ────────────────────────────────────────────────────
