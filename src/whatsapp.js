@@ -27,23 +27,40 @@ function wa(addr) {
   return addr.startsWith("whatsapp:") ? addr : `whatsapp:${addr.startsWith("+") ? addr : "+" + addr}`;
 }
 
+// fetch con timeout (AbortController) — evita peticiones colgadas si Twilio va lento.
+async function fetch_timeout(url, options = {}, ms = 20000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...options, signal: ctrl.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 // ─── POST genérico a la API de mensajes de Twilio ────────────────
+// Nunca lanza: ante error de red/timeout/HTTP devuelve null (el handler sigue).
 async function post_message(params) {
   const body = new URLSearchParams(params);
-  const res = await fetch(MESSAGES_URL, {
-    method: "POST",
-    headers: {
-      "Authorization": AUTH_HEADER,
-      "Content-Type": "application/x-www-form-urlencoded"
-    },
-    body
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    logger.error({ err: data, to: params.To }, "Error enviando mensaje (Twilio)");
+  try {
+    const res = await fetch_timeout(MESSAGES_URL, {
+      method: "POST",
+      headers: {
+        "Authorization": AUTH_HEADER,
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      logger.error({ err: data, to: params.To, status: res.status }, "Error enviando mensaje (Twilio)");
+      return null;
+    }
+    return data.sid; // SID del mensaje saliente
+  } catch (err) {
+    logger.error({ err: err.message, to: params.To }, "Fallo de red/timeout enviando mensaje (Twilio)");
     return null;
   }
-  return data.sid; // SID del mensaje saliente
 }
 
 // ─── Enviar mensaje de texto ────────────────────────────────────
@@ -99,20 +116,28 @@ export async function download_media(media_url, save_to) {
     logger.error("download_media sin URL");
     return null;
   }
-  const res = await fetch(media_url, { headers: { "Authorization": AUTH_HEADER } });
-  if (!res.ok) {
-    logger.error({ media_url, status: res.status }, "No se pudo descargar el media de Twilio");
+  try {
+    const res = await fetch_timeout(media_url, { headers: { "Authorization": AUTH_HEADER } }, 25000);
+    if (!res.ok) {
+      logger.error({ media_url, status: res.status }, "No se pudo descargar el media de Twilio");
+      return null;
+    }
+    const mime = res.headers.get("content-type") || "image/jpeg";
+    const buffer = Buffer.from(await res.arrayBuffer());
+
+    const dir = path.dirname(save_to);
+    try { fs.mkdirSync(dir, { recursive: true }); } catch (e) {
+      logger.error({ dir, err: e.message }, "No pude crear carpeta para el media");
+      return null;
+    }
+    fs.writeFileSync(save_to, buffer);
+
+    logger.info({ media_url, save_to, size: buffer.length }, "Media descargado (Twilio)");
+    return { path: save_to, mime, size: buffer.length };
+  } catch (err) {
+    logger.error({ media_url, err: err.message }, "Fallo de red/timeout descargando media (Twilio)");
     return null;
   }
-  const mime = res.headers.get("content-type") || "image/jpeg";
-  const buffer = Buffer.from(await res.arrayBuffer());
-
-  const dir = path.dirname(save_to);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(save_to, buffer);
-
-  logger.info({ media_url, save_to, size: buffer.length }, "Media descargado (Twilio)");
-  return { path: save_to, mime, size: buffer.length };
 }
 
 // ─── Subir media: en el flujo Meta servía para reenviar el comprobante

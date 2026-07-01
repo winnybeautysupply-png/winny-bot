@@ -7,7 +7,8 @@ import { SYSTEM_PROMPT, OWNER_PROMPT } from "./prompts.js";
 import { catalog_summary } from "./catalog.js";
 import { logger } from "./logger.js";
 
-const claude = new Anthropic({ apiKey: config.claude.api_key });
+// timeout + reintentos: si Claude responde lento o falla puntualmente, no cuelga el bot.
+const claude = new Anthropic({ apiKey: config.claude.api_key, timeout: 45000, maxRetries: 2 });
 
 // Tools que Claude puede llamar para acciones especiales
 const TOOLS = [
