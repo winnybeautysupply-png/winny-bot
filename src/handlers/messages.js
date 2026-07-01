@@ -472,7 +472,7 @@ async function handle_text(parsed, contact) {
     from,
     msg: (text || "").slice(0, 80),
     tools: (ai.tool_calls || []).map(t => t.name),
-    text_preview: (ai.text || "").slice(0, 160)
+    text_preview: (ai.text || "").slice(0, 600)
   }, "🤖 Claude respondió");
 
   // Procesar tool calls si los hay.
