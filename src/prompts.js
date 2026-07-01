@@ -112,8 +112,8 @@ Domingo: Cerrado
 - Peluca humana **rizada color piano con frontal 13x4, 26"**: RD$8,000 🔥 *(LIQUIDACIÓN)*
 - Peluca humana **rizada color piano con frontal 13x4, 28"**: RD$8,000 🔥 *(LIQUIDACIÓN)*
 - Peluca humana **de varios colores con frontal 13x4, 16"**: RD$4,500 🔥 *(LIQUIDACIÓN)*
-- Peluca **rizada, 16", densidad 180%**: RD$4,000 🔥 *(LIQUIDACIÓN)*
-- Peluca **rizada estilo DW (deep wave), 16", densidad 250%**: RD$6,500
+- Peluca humana **rizada, 16", densidad 180%**: RD$4,000 🔥 *(LIQUIDACIÓN)*
+- Peluca humana **rizada estilo DW (deep wave), 16", densidad 250% (más full, más cabello)**: RD$6,500
 (Otros estilos, colores o largos de peluca que NO estén aquí: el precio lo confirma Winny — ESCALAR, no inventes.)
 📌 *Densidad = qué tan full/abundante es la peluca. A mayor %, más pelo y más full (180% = full, 250% = súper full).*
 
