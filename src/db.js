@@ -18,16 +18,23 @@ function ensure_dir(dir) {
   }
 }
 
+// Estado de la DB, expuesto para /health (diagnóstico remoto sin tocar el servidor).
+export const DB_INFO = { path: null, persistent: false, memory: false };
+
 // Resuelve una ruta de DB USABLE. Intenta la configurada (disco persistente /app/data);
 // si el disco no está montado o no es escribible, cae a ./data local para que el bot
 // NO se caiga. Último recurso: DB en memoria (responde, aunque no persista).
 function resolve_db_path() {
   for (const p of [config.db_path, "./data/winny-bot.db"]) {
     if (ensure_dir(path.dirname(p))) {
+      DB_INFO.path = p;
+      DB_INFO.persistent = p === config.db_path;
       if (p !== config.db_path) console.error(`⚠️  Usando ruta de DB de respaldo: ${p} (revisa el disco persistente)`);
       return p;
     }
   }
+  DB_INFO.path = ":memory:";
+  DB_INFO.memory = true;
   console.error("⚠️  DB en MEMORIA: el bot responde pero NO persiste. Revisa el disco de Render.");
   return ":memory:";
 }
@@ -79,6 +86,11 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_orders_phone ON orders(phone, status);
 `);
+
+// Chequeo vivo de la DB para /health (consulta trivial).
+export function db_healthy() {
+  try { return db.prepare("SELECT 1 AS ok").get()?.ok === 1; } catch { return false; }
+}
 
 // ─── API pública ────────────────────────────────────────────────
 

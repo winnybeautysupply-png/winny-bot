@@ -35,14 +35,23 @@ app.get("/", (_req, res) => {
 });
 
 import { is_business_open } from "./config.js";
+import { DB_INFO, db_healthy } from "./db.js";
 
 app.get("/health", (_req, res) => {
+  // Verificación viva de la DB (que responda una consulta trivial)
+  let db_ok = false;
+  try { db_ok = db_healthy(); } catch { db_ok = false; }
   res.json({
     status: "ok",
     service: "winny-bot",
     timestamp: new Date().toISOString(),
     business: config.business.name,
-    is_open: is_business_open()
+    is_open: is_business_open(),
+    // ── Diagnóstico de despliegue (para verificar remotamente qué versión está viva) ──
+    commit: (process.env.RENDER_GIT_COMMIT || "unknown").slice(0, 7),
+    model: config.claude.model,
+    owner_last4: (config.business.owner_phone || "").slice(-4),
+    db: { path: DB_INFO.path, persistent: DB_INFO.persistent, memory: DB_INFO.memory, ok: db_ok }
   });
 });
 
