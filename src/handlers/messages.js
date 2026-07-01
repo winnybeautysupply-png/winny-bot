@@ -220,8 +220,10 @@ async function handle_image(parsed, contact) {
     const attrs = [a.tipo, a.textura, a.color, a.largo].filter(Boolean).join(", ");
     const synth =
       `[La clienta me envió una FOTO. Análisis de visión: ${cls.descripcion}` +
-      `${attrs ? ` (cabello visible: ${attrs})` : ""}. Comenta con cariño lo que se ve y recomiéndale del ` +
-      `catálogo las pelucas/cabello MÁS PARECIDAS con sus precios; usa la herramienta mostrar_producto para mostrarle opciones.]`;
+      `${attrs ? ` (cabello visible: ${attrs})` : ""}. ` +
+      `DEBES, en ESTE mismo mensaje: (1) comentar con cariño lo que se ve, y (2) nombrar 2-3 pelucas/cabello del catálogo MÁS PARECIDAS ` +
+      `CON SU PRECIO (ej: "se parece a nuestra Peluca rizada 28\" — RD$9,000"). 🚫 PROHIBIDO responder solo "déjame mostrarte" o "ahora mismo" ` +
+      `sin dar los nombres y precios. Usa también mostrar_producto para enviar fotos, pero los nombres+precios van en el texto.]`;
     await handle_text({ ...parsed, type: "text", text: synth }, contact);
     return;
   }
