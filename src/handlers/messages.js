@@ -428,8 +428,8 @@ async function handle_text(parsed, contact) {
     return;
   }
 
-  // Construir historial para Claude
-  const history_rows = get_recent_messages(from, 10);
+  // Construir historial para Claude (16 mensajes = ~8 idas y vueltas, para no olvidar el inicio del chat)
+  const history_rows = get_recent_messages(from, 16);
   const history = format_history(history_rows.slice(0, -1)); // excluir mensaje actual
 
   const ctx = {

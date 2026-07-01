@@ -195,6 +195,15 @@ export async function generate_response(user_message, history = [], ctx = {}) {
     ? "\n\n[NOTA INTERNA: El negocio está cerrado ahora mismo. Si el cliente pregunta por horario, recordarle que abrimos mañana 9am.]"
     : "";
 
+  // Inyectar el NOMBRE de la clienta (de su perfil de WhatsApp) para que el bot la trate por su nombre.
+  const raw_name = (ctx.contact_name || "").trim();
+  // Nombre "usable": tiene letras y no es un número/negocio raro. Si no, usamos "reina" como siempre.
+  const looks_like_name = raw_name && /[a-záéíóúñ]/i.test(raw_name) && raw_name.replace(/[^\d]/g, "").length < raw_name.length / 2;
+  const first_name = looks_like_name ? raw_name.split(/\s+/)[0] : "";
+  const name_text = first_name
+    ? `\n\n[NOTA INTERNA: El nombre de la clienta (según su WhatsApp) es "${first_name}". Trátala por su nombre de forma natural y cálida (ej: "Hola ${first_name} reina 💕", "claro ${first_name} mi amor"). NO la satures repitiéndolo en cada línea — úsalo en el saludo y de vez en cuando. Si el nombre parece un apodo raro, un negocio o emojis, ignóralo y usa "reina/mi amor". NUNCA le preguntes su nombre si ya lo tienes aquí.]`
+    : "";
+
   const messages = [
     ...history.map(m => ({ role: m.role, content: m.content })),
     { role: "user", content: user_message }
@@ -214,7 +223,7 @@ export async function generate_response(user_message, history = [], ctx = {}) {
       model: config.claude.model,
       max_tokens: 600,
       temperature: 0.7,
-      system: SYSTEM_PROMPT + catalog_text + ctx_text,
+      system: SYSTEM_PROMPT + catalog_text + ctx_text + name_text,
       tools: TOOLS,
       messages
     });
