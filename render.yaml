@@ -1,6 +1,9 @@
 # ═══════════════════════════════════════════════════════════════
 # Render.com — config para auto-deploy
 # Subes este repo a GitHub, conectas a Render, y se despliega solo.
+# (Nota: el servicio corre en runtime Docker, así que Render usa el
+#  Dockerfile y estas envVars/disk son de referencia, no se aplican.)
+# auto-deploy GitHub↔Render reconectado: 2026-07-01
 # ═══════════════════════════════════════════════════════════════
 services:
   - type: web
