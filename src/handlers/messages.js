@@ -12,7 +12,8 @@ import {
   upsert_contact, save_message, get_recent_messages,
   set_handoff, is_handed_off,
   get_active_order, create_order, update_order,
-  get_pending_verification, get_latest_pending_verification
+  get_pending_verification, get_latest_pending_verification,
+  get_customer_orders
 } from "../db.js";
 import { generate_response, extract_order_from_chat, generate_owner_response } from "../ai.js";
 import { append_order_row } from "../sheets.js";
@@ -47,6 +48,23 @@ function format_history(rows) {
     role: r.direction === "in" ? "user" : "assistant",
     content: r.content || ""
   }));
+}
+
+// Resume las compras pasadas de una clienta en texto, para que el bot la reconozca al volver.
+function summarize_orders(orders) {
+  if (!orders || !orders.length) return "";
+  const lines = orders.map(o => {
+    let arr = o.items;
+    if (typeof arr === "string") { try { arr = JSON.parse(arr); } catch { arr = []; } }
+    if (!Array.isArray(arr) || !arr.length) return null;
+    const prods = arr
+      .map(p => `${p.cantidad || 1}× ${p.nombre}${p.detalles ? ` (${p.detalles})` : ""}`)
+      .join(", ");
+    let fecha = "";
+    try { fecha = new Date(o.created_at).toLocaleDateString("es-DO", { timeZone: config.business.timezone }); } catch {}
+    return `- ${fecha ? fecha + ": " : ""}${prods}${o.total ? ` — RD$${rd(o.total)}` : ""}`;
+  }).filter(Boolean);
+  return lines.join("\n");
 }
 
 async function notify_winny({ from, contact_name, reason, urgency = "media", message }) {
@@ -434,7 +452,8 @@ async function handle_text(parsed, contact) {
 
   const ctx = {
     is_open: is_business_open(),
-    contact_name: contact?.name
+    contact_name: contact?.name,
+    purchase_history: summarize_orders(get_customer_orders(from, 6))
   };
 
   // Llamar a Claude

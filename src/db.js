@@ -142,6 +142,17 @@ export function get_order(id) {
   return db.prepare("SELECT * FROM orders WHERE id = ?").get(id);
 }
 
+// Historial de COMPRAS confirmadas de una clienta — para que el bot la
+// reconozca cuando vuelve y recuerde qué compró (aunque haya pasado tiempo).
+export function get_customer_orders(phone, limit = 6) {
+  return db.prepare(`
+    SELECT items, total, status, created_at
+    FROM orders
+    WHERE phone = ? AND status = 'paid'
+    ORDER BY created_at DESC LIMIT ?
+  `).all(phone, limit);
+}
+
 // Pedido de un cliente esperando que Winny verifique el pago
 export function get_pending_verification(phone) {
   return db.prepare(`

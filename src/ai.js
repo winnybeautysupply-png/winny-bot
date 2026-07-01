@@ -204,6 +204,11 @@ export async function generate_response(user_message, history = [], ctx = {}) {
     ? `\n\n[NOTA INTERNA: El nombre de la clienta (según su WhatsApp) es "${first_name}". Trátala por su nombre de forma natural y cálida (ej: "Hola ${first_name} reina 💕", "claro ${first_name} mi amor"). NO la satures repitiéndolo en cada línea — úsalo en el saludo y de vez en cuando. Si el nombre parece un apodo raro, un negocio o emojis, ignóralo y usa "reina/mi amor". NUNCA le preguntes su nombre si ya lo tienes aquí.]`
     : "";
 
+  // Inyectar el HISTORIAL DE COMPRAS para que el bot reconozca a la clienta que vuelve.
+  const history_text = ctx.purchase_history
+    ? `\n\n[NOTA INTERNA: Esta clienta YA te ha comprado antes. Su historial de compras:\n${ctx.purchase_history}\nReconócela con cariño como clienta que vuelve (ej: "¡Qué bueno tenerte de vuelta reina! 💕"). Puedes referirte a lo que compró antes si viene al caso (ej: preguntarle cómo le fue con su pelo, u ofrecerle algo que combine). Úsalo con naturalidad, NO se lo recites como una lista de robot.]`
+    : "";
+
   const messages = [
     ...history.map(m => ({ role: m.role, content: m.content })),
     { role: "user", content: user_message }
@@ -223,7 +228,7 @@ export async function generate_response(user_message, history = [], ctx = {}) {
       model: config.claude.model,
       max_tokens: 600,
       temperature: 0.7,
-      system: SYSTEM_PROMPT + catalog_text + ctx_text + name_text,
+      system: SYSTEM_PROMPT + catalog_text + ctx_text + name_text + history_text,
       tools: TOOLS,
       messages
     });
