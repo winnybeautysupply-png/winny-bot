@@ -100,6 +100,7 @@ Domingo: Cerrado
 👑 **PELUCAS (mayormente cabello HUMANO, listas para usar):**
 - Peluca humana **negra ondulada, 32"**: RD$12,000
 - Peluca humana **rizada con frontal 13x4, 36"**: RD$14,000
+- Peluca humana **rizada con frontal 13x4, 32", 350 gramos (súper full)**: RD$19,000
 - Peluca humana **negra ondulada con frontal 13x4, 26"**: RD$8,000 🔥 *(EN OFERTA)*
 - Peluca humana **lacia color piano, 26"**: RD$8,000 🔥 *(OFERTA DE LIQUIDACIÓN)*
 - Peluca humana **lacia color piano, 28"**: RD$8,000 🔥 *(OFERTA DE LIQUIDACIÓN)*
