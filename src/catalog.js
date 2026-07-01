@@ -69,15 +69,24 @@ export async function get_catalog() {
   }
 }
 
+// Normaliza texto: minúsculas, sin acentos, y quita la 's' final (plural→singular)
+// para que "pelucas humanas" haga match con etiquetas "peluca, humana".
+function norm(s) {
+  return (s || "").toLowerCase()
+    .replace(/[áàä]/g, "a").replace(/[éèë]/g, "e").replace(/[íìï]/g, "i")
+    .replace(/[óòö]/g, "o").replace(/[úùü]/g, "u").replace(/ñ/g, "n");
+}
+function stem(w) { return w.replace(/s$/, ""); } // singulariza (aproximado)
+
 // Busca productos por descripción (nombre + etiquetas + colores).
 export async function find_products(query, limit = 2) {
   const cat = await get_catalog();
-  const words = (query || "").toLowerCase().split(/[\s,]+/).filter(w => w.length > 2);
+  const words = norm(query).split(/[\s,]+/).filter(w => w.length > 2).map(stem);
   if (!words.length) return [];
   const scored = cat
     .filter(p => p.disponible)
     .map(p => {
-      const hay = `${p.nombre} ${p.etiquetas} ${p.colores}`.toLowerCase();
+      const hay = norm(`${p.nombre} ${p.etiquetas} ${p.colores}`);
       let score = 0;
       for (const w of words) if (hay.includes(w)) score++;
       return { p, score };
