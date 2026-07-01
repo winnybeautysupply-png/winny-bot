@@ -1,6 +1,7 @@
 // ═══════════════════════════════════════════════════════════════
 // Handler principal — recibe mensaje, decide qué hacer, responde
 // ═══════════════════════════════════════════════════════════════
+import fs from "fs";
 import path from "path";
 import { config, is_business_open } from "../config.js";
 import { logger } from "../logger.js";
@@ -15,7 +16,7 @@ import {
   get_pending_verification, get_latest_pending_verification,
   get_customer_orders
 } from "../db.js";
-import { generate_response, extract_order_from_chat, generate_owner_response } from "../ai.js";
+import { generate_response, extract_order_from_chat, generate_owner_response, analyze_image } from "../ai.js";
 import { append_order_row } from "../sheets.js";
 import { generate_invoice } from "../invoice.js";
 import { transcribe_audio, transcription_enabled } from "../transcribe.js";
@@ -128,38 +129,17 @@ async function send_product(to, p) {
   }
 }
 
-// ═══ Handler de IMAGEN (probable comprobante de pago) ══════════
+// ═══ Handler de IMAGEN — VISIÓN primero, luego decide la acción ══════════
 
-async function handle_image(parsed, contact) {
-  const { from, media_url, mime } = parsed;
-  const filename = `${from}-${Date.now()}.${(mime?.split("/")[1]) || "jpg"}`;
-  const save_to = path.join(config.receipts_dir, filename);
-
-  const downloaded = await download_media(media_url, save_to);
-  if (!downloaded) {
-    await send_text(from, "Ay mi amor, no me llegó bien la imagen 😅 ¿Me la mandas otra vez por favor?");
-    return;
-  }
-
-  // Guardar en el pedido activo si hay uno
+// Flujo de verificación de PAGO (solo cuando la imagen ES un comprobante). Reusable.
+async function process_payment_receipt(parsed, contact, save_to, filename) {
+  const { from } = parsed;
   const order = get_active_order(from);
-  if (order) {
-    update_order(order.id, { receipt_path: save_to, status: "awaiting_verification" });
-  }
-  // Recordar esta clienta para que Winny pueda confirmar/rechazar con solo "llegó"/"no llegó"
+  if (order) update_order(order.id, { receipt_path: save_to, status: "awaiting_verification" });
   last_comprobante_from = from;
 
-  save_message({
-    phone: from, direction: "in", type: "image",
-    content: parsed.caption || "(comprobante)",
-    media_path: save_to, wa_message_id: parsed.id
-  });
-
-  // Confirmar al cliente (sin prometer que ya va en camino — falta que Winny confirme el pago)
   await send_text(from,
     `¡Recibí tu comprobante mi amor! 💕✨\n\nWinny verifica que el pago haya llegado y te confirmamos enseguida para preparar tu pedido 🛍️`);
-
-  // Reenviar el comprobante (la FOTO) a Winny vía URL pública, con instrucciones para confirmar
   try {
     const public_url = `${config.public_base_url}/comprobantes/${filename}`;
     const hint =
@@ -180,6 +160,85 @@ async function handle_image(parsed, contact) {
       urgency: "alta"
     });
   }
+}
+
+async function handle_image(parsed, contact) {
+  const { from, media_url, mime } = parsed;
+  const filename = `${from}-${Date.now()}.${(mime?.split("/")[1]) || "jpg"}`;
+  const save_to = path.join(config.receipts_dir, filename);
+
+  const downloaded = await download_media(media_url, save_to);
+  if (!downloaded) {
+    await send_text(from, "Ay mi amor, no me llegó bien la imagen 😅 ¿Me la mandas otra vez por favor?");
+    return;
+  }
+
+  // 1) VISIÓN: analizar la imagen ANTES de decidir qué hacer.
+  let cls = null;
+  try {
+    const b64 = fs.readFileSync(save_to).toString("base64");
+    const media_type = (downloaded.mime || mime || "image/jpeg").split(";")[0];
+    const history = format_history(get_recent_messages(from, 8));
+    cls = await analyze_image(b64, media_type, history);
+  } catch (err) {
+    logger.error({ err: err.message, from }, "Error leyendo/analizando la imagen");
+  }
+
+  const cat = cls?.categoria || "desconocida";
+  const conf = cls?.confianza ?? 0;
+  logger.info(
+    { from, categoria: cat, es_pago: cls?.es_pago, confianza: conf, desc: (cls?.descripcion || "").slice(0, 140) },
+    "🖼️ imagen clasificada (visión)"
+  );
+
+  // Guardar en el historial con la descripción de visión (para dar contexto al chat).
+  save_message({
+    phone: from, direction: "in", type: "image",
+    content: cls
+      ? `[imagen: ${cat}] ${cls.descripcion || ""}${cls.texto_visible ? " | texto: " + cls.texto_visible : ""}`
+      : "(imagen)",
+    media_path: save_to, wa_message_id: parsed.id
+  });
+
+  // 2) Si la visión falló → pedir aclaración (NUNCA asumir comprobante).
+  if (!cls) {
+    await send_text(from, "Recibí tu imagen mi amor 💕 ¿me dices qué es? (¿un comprobante de pago, una peluca que te gustó, o una foto de referencia?) para ayudarte mejor ✨");
+    return;
+  }
+
+  // 3) COMPROBANTE / RECIBO DE PAGO → flujo de verificación (solo si es pago con confianza).
+  if ((cls.es_pago || cat === "comprobante_pago" || cat === "recibo") && conf >= 0.5) {
+    logger.info({ from }, "🖼️→ ruta: COMPROBANTE de pago");
+    await process_payment_receipt(parsed, contact, save_to, filename);
+    return;
+  }
+
+  // 4) CABELLO / PELUCA / PERSONA / PRODUCTO → recomendar lo más parecido del catálogo.
+  if (["peluca_producto", "cabello_peinado", "persona_con_peluca", "captura_producto", "maniqui"].includes(cat)) {
+    logger.info({ from, cat }, "🖼️→ ruta: RECOMENDACIÓN por imagen");
+    const a = cls.atributos_cabello || {};
+    const attrs = [a.tipo, a.textura, a.color, a.largo].filter(Boolean).join(", ");
+    const synth =
+      `[La clienta me envió una FOTO. Análisis de visión: ${cls.descripcion}` +
+      `${attrs ? ` (cabello visible: ${attrs})` : ""}. Comenta con cariño lo que se ve y recomiéndale del ` +
+      `catálogo las pelucas/cabello MÁS PARECIDAS con sus precios; usa la herramienta mostrar_producto para mostrarle opciones.]`;
+    await handle_text({ ...parsed, type: "text", text: synth }, contact);
+    return;
+  }
+
+  // 5) CAPTURA DE CONVERSACIÓN / DOCUMENTO / FACTURA / etc. → responder al contenido/texto.
+  if (["captura_conversacion", "documento", "factura", "caja", "logo"].includes(cat)) {
+    logger.info({ from, cat }, "🖼️→ ruta: responder al CONTENIDO");
+    const synth =
+      `[La clienta me envió una imagen tipo "${cat}". Análisis: ${cls.descripcion}.` +
+      `${cls.texto_visible ? ` Texto en la imagen: "${cls.texto_visible}".` : ""} Responde de forma útil según ese contenido.]`;
+    await handle_text({ ...parsed, type: "text", text: synth }, contact);
+    return;
+  }
+
+  // 6) OTRO / baja confianza → pedir aclaración (jamás asumir comprobante).
+  logger.info({ from, cat, conf }, "🖼️→ ruta: ACLARACIÓN (otro/baja confianza)");
+  await send_text(from, "Recibí tu imagen mi amor 💕 Para ayudarte mejor, ¿me dices qué necesitas con ella? (¿es un comprobante de pago, una peluca que te gustó, o una referencia de estilo/color?) ✨");
 }
 
 // ═══ Handler de AUDIO (nota de voz) — transcribe y procesa ══════

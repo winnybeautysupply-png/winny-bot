@@ -135,6 +135,76 @@ export async function extract_order_from_chat(history = []) {
   }
 }
 
+// ═══ VISIÓN — clasificar y describir una imagen que envía la clienta ═══
+const IMAGE_CLASSIFY_TOOL = {
+  name: "clasificar_imagen",
+  description: "Clasifica y describe la imagen que envió una clienta de una tienda de pelucas y cabello.",
+  input_schema: {
+    type: "object",
+    properties: {
+      categoria: {
+        type: "string",
+        enum: [
+          "comprobante_pago", "recibo", "factura", "documento",
+          "peluca_producto", "cabello_peinado", "persona_con_peluca",
+          "captura_conversacion", "captura_producto",
+          "maniqui", "caja", "logo", "otro"
+        ],
+        description: "La categoría que MEJOR describe la imagen"
+      },
+      descripcion: { type: "string", description: "Qué se ve en la imagen, en español, 1-2 frases" },
+      texto_visible: { type: "string", description: "Todo el texto legible en la imagen (montos, banco, nombre, etc.); vacío si no hay" },
+      atributos_cabello: {
+        type: "object",
+        description: "Solo si se ve cabello/peluca",
+        properties: {
+          color: { type: "string" }, textura: { type: "string", description: "lacio/ondulado/rizado" },
+          largo: { type: "string" }, tipo: { type: "string", description: "humano, sintético, piano, etc." }
+        }
+      },
+      es_pago: { type: "boolean", description: "true SOLO si es claramente un comprobante/recibo/transferencia de PAGO" },
+      confianza: { type: "number", description: "0 a 1, qué tan seguro estás de la categoría" }
+    },
+    required: ["categoria", "descripcion", "es_pago", "confianza"]
+  }
+};
+
+/**
+ * Analiza una imagen con visión y devuelve su clasificación estructurada.
+ * @param {string} base64 - imagen en base64
+ * @param {string} media_type - ej "image/jpeg"
+ * @param {Array} history - [{role, content}] para contexto del chat
+ * @returns {Object|null}
+ */
+export async function analyze_image(base64, media_type = "image/jpeg", history = []) {
+  try {
+    const messages = [
+      ...history.map(m => ({ role: m.role, content: m.content })),
+      {
+        role: "user",
+        content: [
+          { type: "image", source: { type: "base64", media_type, data: base64 } },
+          { type: "text", text: "Clasifica y describe esta imagen que me envió una clienta. Si es un comprobante/recibo de pago o transferencia, márcalo. Si se ve cabello o peluca, describe color, textura, largo y tipo. Si es una captura o documento, lee el texto visible." }
+        ]
+      }
+    ];
+    const response = await claude.messages.create({
+      model: config.claude.model,
+      max_tokens: 500,
+      temperature: 0,
+      system: "Eres un clasificador de visión para el WhatsApp de Winny Beauty Supply (tienda de pelucas y cabello humano en RD). Analizas imágenes que mandan las clientas y las clasificas con precisión. NO asumas que todo es un comprobante de pago: solo marca es_pago=true si REALMENTE ves un comprobante, recibo o transferencia bancaria.",
+      tools: [IMAGE_CLASSIFY_TOOL],
+      tool_choice: { type: "tool", name: "clasificar_imagen" },
+      messages
+    });
+    const block = response.content.find(b => b.type === "tool_use");
+    return block ? block.input : null;
+  } catch (err) {
+    logger.error({ err: err.message }, "Error analizando imagen (visión)");
+    return null;
+  }
+}
+
 // ═══ MODO JEFA — Winny (dueña) le da órdenes al bot ═══════════════
 const OWNER_TOOLS = [
   {
