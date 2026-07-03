@@ -11,14 +11,14 @@ import {
 } from "../whatsapp.js";
 import {
   upsert_contact, save_message, get_recent_messages,
-  set_handoff, is_handed_off,
+  set_handoff, is_handed_off, clear_handoff,
   get_active_order, create_order, update_order,
   get_pending_verification, get_latest_pending_verification,
   get_customer_orders, set_shipping,
   find_duplicate_payment, record_payment
 } from "../db.js";
 import { generate_response, extract_order_from_chat, generate_owner_response, analyze_image } from "../ai.js";
-import { append_order_row, find_latest_order_by_phone } from "../sheets.js";
+import { append_order_row, find_latest_order_by_phone, append_log_row } from "../sheets.js";
 import { generate_invoice } from "../invoice.js";
 import { transcribe_audio, transcription_enabled } from "../transcribe.js";
 import { find_products, get_offers } from "../catalog.js";
@@ -37,6 +37,39 @@ let last_customer_from = null;
 
 // Recuerda el último RECIBO DE ENVÍO que Winny mandó sin número, para reenviarlo cuando ella dé el número
 let last_owner_receipt = null;
+
+// MODO ADMIN: envío pendiente de confirmación ("enviar a X: Y" → espera "sí")
+let pending_admin_send = null;
+
+// Normaliza un teléfono a dígitos con código país (DR: 1XXXXXXXXXX).
+function norm_phone(s) {
+  let d = (s || "").replace(/\D/g, "");
+  if (d.length === 10) d = "1" + d;
+  return d;
+}
+
+// Parsea un COMANDO ADMIN de Winny. Devuelve {action, phone, message} o null.
+function parse_admin_command(text) {
+  const t = (text || "").trim();
+  let m;
+  if ((m = t.match(/^enviar\s+a\s+(\+?\d[\d\s\-().]{6,}\d)\s*:\s*([\s\S]+)$/i)))
+    return { action: "send", phone: norm_phone(m[1]), message: m[2].trim() };
+  if ((m = t.match(/^estado\s+(\+?\d[\d\s\-().]{6,}\d)\s*$/i)))
+    return { action: "status", phone: norm_phone(m[1]) };
+  if ((m = t.match(/^pausar\s+bot\s+(\+?\d[\d\s\-().]{6,}\d)\s*$/i)))
+    return { action: "pause", phone: norm_phone(m[1]) };
+  if ((m = t.match(/^reactivar\s+(?:bot\s+)?(\+?\d[\d\s\-().]{6,}\d)\s*$/i)))
+    return { action: "resume", phone: norm_phone(m[1]) };
+  return null;
+}
+
+// Registra un comando admin en la hoja de Logs (fecha, comando, resultado).
+async function log_admin(comando, resultado) {
+  try {
+    const fecha = new Date().toLocaleString("es-DO", { timeZone: config.business.timezone });
+    await append_log_row([fecha, comando, resultado]);
+  } catch (e) { logger.error({ err: e.message }, "no pude registrar log admin"); }
+}
 
 // Extrae un teléfono dominicano de un texto (809/829/849). Devuelve con código país (1XXXXXXXXXX) o null.
 function extract_phone(text) {
@@ -460,6 +493,63 @@ function parse_owner_command(text) {
 }
 
 async function handle_owner_command(parsed) {
+  const owner = config.business.owner_phone;
+
+  // ═══ MODO ADMIN ═══
+  // (a) Confirmación pendiente de un "enviar a X: Y" (Winny responde sí/no)
+  if (pending_admin_send) {
+    const t = (parsed.text || "").trim().toLowerCase();
+    if (/^s[íi]/.test(t) || t === "ok" || t === "dale") {
+      const { phone, message } = pending_admin_send;
+      pending_admin_send = null;
+      const sid = await send_text(phone, message); // texto EXACTO, sin modificar
+      save_message({ phone, direction: "out", type: "text", content: message, wa_message_id: sid });
+      await send_text(owner, sid ? `✅ Enviado a +${phone}.` : `⚠️ No pude enviar a +${phone} (revisa el número).`);
+      await log_admin(`enviar a ${phone}: ${message.slice(0, 120)}`, sid ? "enviado" : "fallo de envío");
+      return true;
+    }
+    if (/^no/.test(t)) {
+      const { phone } = pending_admin_send;
+      pending_admin_send = null;
+      await send_text(owner, "Ok jefa, cancelado ✋");
+      await log_admin(`enviar a ${phone}`, "cancelado por Winny");
+      return true;
+    }
+    pending_admin_send = null; // cualquier otra cosa cancela el pendiente y sigue el flujo
+  }
+
+  // (b) Comandos admin
+  const admin = parse_admin_command(parsed.text);
+  if (admin) {
+    if (admin.action === "send") {
+      pending_admin_send = { phone: admin.phone, message: admin.message };
+      await send_text(owner, `Voy a enviar a +${admin.phone}:\n"${admin.message}"\n\n¿Confirmas? (sí/no)`);
+      await log_admin(`enviar a ${admin.phone}`, "pendiente de confirmación");
+      return true;
+    }
+    if (admin.action === "status") {
+      const ord = await find_latest_order_by_phone(admin.phone);
+      const resp = ord
+        ? `📦 Cliente +${admin.phone}\nÚltimo pedido: ${ord.producto || "(sin detalle)"}\nEstado: *${ord.estado || "—"}*${ord.mensajero ? `\nMensajero: ${ord.mensajero}` : ""}`
+        : `No encontré pedidos de +${admin.phone} en la hoja.`;
+      await send_text(owner, resp);
+      await log_admin(`estado ${admin.phone}`, ord ? (ord.estado || "sin estado") : "sin pedido");
+      return true;
+    }
+    if (admin.action === "pause") {
+      set_handoff(admin.phone, 7 * 24 * 60); // 7 días: el bot no responde, lo atiende Winny
+      await send_text(owner, `⏸️ Bot pausado para +${admin.phone}. No le responderá; atiéndelo tú. Para reactivarlo dime: *reactivar ${admin.phone}*`);
+      await log_admin(`pausar bot ${admin.phone}`, "pausado (7 días)");
+      return true;
+    }
+    if (admin.action === "resume") {
+      clear_handoff(admin.phone);
+      await send_text(owner, `▶️ Bot reactivado para +${admin.phone}. Ya vuelve a responderle 💕`);
+      await log_admin(`reactivar ${admin.phone}`, "reactivado");
+      return true;
+    }
+  }
+
   // ¿Hay un recibo de envío pendiente y Winny manda el número de la clienta? → reenviarlo.
   if (last_owner_receipt) {
     const t = extract_phone(parsed.text);
@@ -473,8 +563,6 @@ async function handle_owner_command(parsed) {
 
   const cmd = parse_owner_command(parsed.text);
   if (!cmd) return false; // no es comando → que siga el flujo normal de conversación
-
-  const owner = config.business.owner_phone;
 
   // ─── Cotizar ENVÍO a una clienta ───
   if (cmd.action === "shipping") {

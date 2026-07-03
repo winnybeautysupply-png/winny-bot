@@ -70,7 +70,9 @@ export const config = {
     catalog_sheet_id: optional("GOOGLE_CATALOG_SHEET_ID", "18C-c4FAojysgBVjMLUB-_29qm2W7xsW9fFGVWForRoY"),
     catalog_tab: optional("GOOGLE_CATALOG_TAB", "Catalogo"),
     // Pestaña de la hoja de PEDIDOS (vacío = primera hoja del GOOGLE_SHEET_ID)
-    orders_tab: optional("GOOGLE_ORDERS_TAB", "")
+    orders_tab: optional("GOOGLE_ORDERS_TAB", ""),
+    // Pestaña de LOGS de comandos admin (se crea sola si no existe)
+    logs_tab: optional("GOOGLE_LOGS_TAB", "Logs")
   },
 
   // Plantillas de WhatsApp (Twilio Content SID) para mensajes FUERA de la ventana

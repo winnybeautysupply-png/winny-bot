@@ -54,6 +54,43 @@ export async function append_order_row(values) {
   }
 }
 
+// Registra un LOG de comando admin en la pestaña "Logs" (la crea si no existe).
+// values = [fecha, comando, resultado]
+export async function append_log_row(values) {
+  const sheets = get_client();
+  if (!sheets) return false;
+  const tab = config.sheets.logs_tab || "Logs";
+  try {
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: config.sheets.sheet_id,
+      range: `${tab}!A1`,
+      valueInputOption: "USER_ENTERED",
+      insertDataOption: "INSERT_ROWS",
+      requestBody: { values: [values] }
+    });
+    return true;
+  } catch (err) {
+    // La pestaña probablemente no existe → crearla, poner encabezado y reintentar.
+    try {
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId: config.sheets.sheet_id,
+        requestBody: { requests: [{ addSheet: { properties: { title: tab } } }] }
+      });
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: config.sheets.sheet_id,
+        range: `${tab}!A1`,
+        valueInputOption: "USER_ENTERED",
+        insertDataOption: "INSERT_ROWS",
+        requestBody: { values: [["Fecha", "Comando", "Resultado"], values] }
+      });
+      return true;
+    } catch (e2) {
+      logger.error({ err: e2.message }, "Error registrando log admin en Sheets");
+      return false;
+    }
+  }
+}
+
 // Rango de la hoja de pedidos (A:M). Columnas:
 // A Fecha · B Nombre · C Teléfono · D Producto · E Cantidad · F Color/Largo ·
 // G Total · H Estado del pago · I Dirección · J Estado(envío) · K Mensajero ·
