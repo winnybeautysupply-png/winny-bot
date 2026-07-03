@@ -18,7 +18,7 @@ import {
   find_duplicate_payment, record_payment
 } from "../db.js";
 import { generate_response, extract_order_from_chat, generate_owner_response, analyze_image } from "../ai.js";
-import { append_order_row } from "../sheets.js";
+import { append_order_row, find_latest_order_by_phone } from "../sheets.js";
 import { generate_invoice } from "../invoice.js";
 import { transcribe_audio, transcription_enabled } from "../transcribe.js";
 import { find_products, get_offers } from "../catalog.js";
@@ -728,16 +728,23 @@ async function handle_text(parsed, contact) {
       const cantidad_total = productos.reduce((s, p) => s + (Number(p.cantidad) || 1), 0);
       const detalles = productos.map(p => p.detalles).filter(Boolean).join(" / ");
       append_order_row([
-        fecha,                                    // Fecha
-        tool.input.nombre_cliente || "",          // Nombre
-        `+${from}`,                               // Teléfono
-        nombres_prod,                             // Producto
-        cantidad_total,                           // Cantidad
-        detalles,                                 // Color/Largo
-        subtotal ? `RD$${rd(subtotal)}` : "",     // Total (producto, falta envío)
-        "Pendiente de pago",                      // Estado del pago
-        tool.input.direccion || ""                // Dirección
+        fecha,                                    // A Fecha
+        tool.input.nombre_cliente || "",          // B Nombre
+        `+${from}`,                               // C Teléfono
+        nombres_prod,                             // D Producto
+        cantidad_total,                           // E Cantidad
+        detalles,                                 // F Color/Largo
+        subtotal ? `RD$${rd(subtotal)}` : "",     // G Total (producto, falta envío)
+        "Pendiente de pago",                      // H Estado del pago
+        tool.input.direccion || "",               // I Dirección
+        "Confirmado",                             // J Estado (envío)
+        "",                                       // K Mensajero
+        fecha,                                    // L Fecha de actualización
+        ""                                        // M Notificado
       ]).catch(err => logger.error({ err: err.message }, "Sheets append falló"));
+
+      // Confirmación al cliente con el número de pedido
+      await send_text(from, `✅ Tu pedido #${order.id} está confirmado. Te avisaremos cuando salga 💕`);
     } else if (tool.name === "mostrar_producto") {
       const prods = await find_products(tool.input.descripcion || "", 2);
       logger.info({ desc: tool.input.descripcion, encontrados: prods.length }, "🔎 mostrar_producto");
@@ -763,6 +770,17 @@ async function handle_text(parsed, contact) {
       } else {
         await send_text(from, "¡Mira nuestras ofertas, mi amor! 🔥");
         await Promise.all(offers.slice(0, 6).map(p => send_product(from, p)));
+      }
+    } else if (tool.name === "consultar_pedido") {
+      const ord = await find_latest_order_by_phone(from);
+      logger.info({ from, estado: ord?.estado }, "🔎 consultar_pedido");
+      if (!ord) {
+        await send_text(from, "Mi amor, todavía no encuentro un pedido a tu nombre 💕 Si ya compraste, dame un momentito y le confirmo con Winny; o si quieres pedir algo, dime qué te gustó ✨");
+      } else {
+        const estado = ord.estado || "Confirmado";
+        const conMens = ord.mensajero && /camino/i.test(estado) ? ` con ${ord.mensajero}` : "";
+        const cierre = /entregado/i.test(estado) ? "¡Gracias por tu compra reina! 💖" : "Te aviso apenas cambie de estado 💕";
+        await send_text(from, `📦 Tu pedido está: *${estado}*${conMens}${ord.producto ? ` — ${ord.producto}` : ""}. ${cierre}`);
       }
     }
   }

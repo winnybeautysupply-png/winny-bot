@@ -68,7 +68,17 @@ export const config = {
     private_key: optional("GOOGLE_PRIVATE_KEY", "").replace(/\\n/g, "\n"),
     // Catálogo de productos (hoja "catalogo winny", pestaña "Catalogo")
     catalog_sheet_id: optional("GOOGLE_CATALOG_SHEET_ID", "18C-c4FAojysgBVjMLUB-_29qm2W7xsW9fFGVWForRoY"),
-    catalog_tab: optional("GOOGLE_CATALOG_TAB", "Catalogo")
+    catalog_tab: optional("GOOGLE_CATALOG_TAB", "Catalogo"),
+    // Pestaña de la hoja de PEDIDOS (vacío = primera hoja del GOOGLE_SHEET_ID)
+    orders_tab: optional("GOOGLE_ORDERS_TAB", "")
+  },
+
+  // Plantillas de WhatsApp (Twilio Content SID) para mensajes FUERA de la ventana
+  // de 24h (notificación "en camino" y "entregado"). Si están vacías, se usa
+  // mensaje de sesión normal (solo funciona dentro de las 24h).
+  wa_templates: {
+    en_camino: optional("TEMPLATE_EN_CAMINO_SID", ""),
+    entregado: optional("TEMPLATE_ENTREGADO_SID", "")
   },
 
   // DB y storage

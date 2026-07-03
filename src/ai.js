@@ -71,6 +71,11 @@ const TOOLS = [
     name: "mostrar_ofertas",
     description: "Cuando la clienta pide ver las OFERTAS o promociones, llama esta función (sin parámetros). El sistema le manda las fotos/videos de los productos en oferta con sus precios.",
     input_schema: { type: "object", properties: {} }
+  },
+  {
+    name: "consultar_pedido",
+    description: "Cuando la clienta pregunta por el ESTADO de su pedido ('¿dónde está mi pedido?', '¿ya salió?', '¿cuándo llega?', 'estatus de mi orden'), llama esta función (sin parámetros). El sistema busca su pedido por su número de teléfono y le dice el estado más reciente (Confirmado, Preparando, En camino, Entregado).",
+    input_schema: { type: "object", properties: {} }
   }
 ];
 

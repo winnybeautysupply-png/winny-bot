@@ -68,6 +68,17 @@ export async function send_text(to, body) {
   return post_message({ From: FROM, To: wa(to), Body: body });
 }
 
+// ─── Enviar una PLANTILLA de WhatsApp (Twilio Content SID) ──────
+// Para mensajes FUERA de la ventana de 24h (Meta exige plantilla aprobada).
+// `variables` = objeto {"1":"valor","2":"valor"} con las variables de la plantilla.
+export async function send_wa_template(to, content_sid, variables = {}) {
+  return post_message({
+    From: FROM, To: wa(to),
+    ContentSid: content_sid,
+    ContentVariables: JSON.stringify(variables)
+  });
+}
+
 // ─── Botones interactivos → Twilio los maneja con Content Templates.
 //     Para un bot conversacional con IA usamos texto plano: degradamos
 //     los botones a una lista numerada dentro del mismo mensaje.
