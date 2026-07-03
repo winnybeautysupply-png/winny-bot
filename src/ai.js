@@ -135,6 +135,50 @@ export async function extract_order_from_chat(history = []) {
   }
 }
 
+// ═══ VOZ — respuesta para llamadas telefónicas (Twilio ConversationRelay) ═══
+const VOICE_OVERRIDE =
+  "\n\n═══ ⚡ ESTÁS EN UNA LLAMADA DE VOZ POR TELÉFONO (REGLA QUE MANDA) ═══\n" +
+  "Responde en 2-3 oraciones MÁXIMO, natural como hablando por teléfono. " +
+  "PROHIBIDO usar emojis, asteriscos, guiones, viñetas o cualquier formato de texto. " +
+  "Di los NÚMEROS y PRECIOS en PALABRAS (ej: 'mil setecientos noventa pesos', NO 'RD$1,790'; 'veinte pulgadas', NO '20\"'). " +
+  "No leas listas largas: si hay varias opciones, menciona 2 o 3 y pregunta cuál le interesa. " +
+  "Sé cálida y dominicana pero BREVE. Si necesitas datos para un pedido, pídelos de a uno.";
+
+/**
+ * Genera la respuesta del bot en una LLAMADA DE VOZ (texto que se leerá con TTS).
+ * Reusa el mismo conocimiento del catálogo/precios, pero con estilo de voz.
+ * @param {string} user_message - lo que dijo la clienta (transcrito)
+ * @param {Array} history - [{role, content}]
+ * @returns {string} texto a decir
+ */
+export async function generate_voice_response(user_message, history = []) {
+  let catalog_text = "";
+  try {
+    const cat = await catalog_summary();
+    if (cat) catalog_text = `\n\n═══ CATÁLOGO (precios de referencia) ═══\n${cat}`;
+  } catch { /* sin catálogo si falla */ }
+
+  const messages = [
+    ...history.map(m => ({ role: m.role, content: m.content })),
+    { role: "user", content: user_message }
+  ];
+  try {
+    const response = await claude.messages.create({
+      model: config.claude.model,
+      max_tokens: 300,
+      temperature: 0.7,
+      system: SYSTEM_PROMPT + catalog_text + VOICE_OVERRIDE,
+      messages
+    });
+    let text = "";
+    for (const b of response.content) if (b.type === "text") text += b.text;
+    return text.trim() || "Disculpa mi amor, ¿me repites por favor?";
+  } catch (err) {
+    logger.error({ err: err.message }, "Error en respuesta de voz");
+    return "Disculpa, tuve un problemita técnico. ¿Me repites por favor?";
+  }
+}
+
 // ═══ VISIÓN — clasificar y describir una imagen que envía la clienta ═══
 const IMAGE_CLASSIFY_TOOL = {
   name: "clasificar_imagen",

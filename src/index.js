@@ -8,10 +8,12 @@
 //   GET  /          → landing simple
 // ═══════════════════════════════════════════════════════════════
 import express from "express";
+import http from "http";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
 import { parse_incoming } from "./whatsapp.js";
 import { handle_incoming } from "./handlers/messages.js";
+import { setup_voice_ws } from "./voice.js";
 
 const app = express();
 // Twilio manda los webhooks como application/x-www-form-urlencoded
@@ -97,6 +99,22 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
+// ─── VOZ (Fase 1): Twilio pega aquí cuando entra una LLAMADA ─────
+// Responde TwiML que conecta la llamada a ConversationRelay (nuestro WS de voz).
+app.post("/voice/incoming", (_req, res) => {
+  const wss_url = config.public_base_url.replace(/^http/i, "ws") + "/voice/ws";
+  res.set("Content-Type", "text/xml");
+  res.send(
+    `<?xml version="1.0" encoding="UTF-8"?>\n` +
+    `<Response>\n` +
+    `  <Connect>\n` +
+    `    <ConversationRelay url="${wss_url}" language="es-MX" ` +
+    `welcomeGreeting="¡Hola! Gracias por llamar a Winny Beauty Supply, ¿en qué puedo ayudarte?" />\n` +
+    `  </Connect>\n` +
+    `</Response>`
+  );
+});
+
 // ─── Error handler global ────────────────────────────────────────
 app.use((err, _req, res, _next) => {
   logger.error({ err: err.message, stack: err.stack }, "Unhandled error");
@@ -104,7 +122,11 @@ app.use((err, _req, res, _next) => {
 });
 
 // ─── Start ───────────────────────────────────────────────────────
-app.listen(config.port, () => {
+// Servidor HTTP explícito para poder adjuntar el WebSocket de voz.
+const server = http.createServer(app);
+setup_voice_ws(server); // adjunta el WS de ConversationRelay en /voice/ws
+
+server.listen(config.port, () => {
   logger.info({
     port: config.port,
     business: config.business.name,
