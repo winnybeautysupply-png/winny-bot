@@ -206,16 +206,17 @@ async function send_product(to, p) {
 // Flujo de verificación de PAGO (solo cuando la imagen ES un comprobante bancario).
 async function process_payment_receipt(parsed, contact, save_to, filename, cls = null) {
   const { from } = parsed;
+  const d = cls?.datos_pago || {};
   const order = get_active_order(from);
   if (order) update_order(order.id, { receipt_path: save_to, status: "awaiting_verification" });
   last_comprobante_from = from;
 
+  // Confirmación al cliente CON EL MONTO leído del comprobante (si se detectó)
   await send_text(from,
-    `¡Recibí tu comprobante mi amor! 💕✨\n\nWinny verifica que el pago haya llegado y te confirmamos enseguida para preparar tu pedido 🛍️`);
+    `¡Recibimos tu comprobante${d.monto ? ` de ${d.monto}` : ""} mi amor! ✅\n\nLo estamos verificando y te confirmamos enseguida para preparar tu pedido 🛍️💕`);
   try {
     const public_url = `${config.public_base_url}/comprobantes/${filename}`;
     // Datos leídos del comprobante con OCR (banco, monto, fecha, referencia, remitente)
-    const d = cls?.datos_pago || {};
     const datos = [
       d.banco ? `🏦 Banco: ${d.banco}` : "",
       d.monto ? `💵 Monto: ${d.monto}` : "",
@@ -264,7 +265,8 @@ async function handle_image(parsed, contact) {
 
   const downloaded = await download_media(media_url, save_to);
   if (!downloaded) {
-    await send_text(from, "Ay mi amor, no me llegó bien la imagen 😅 ¿Me la mandas otra vez por favor?");
+    logger.error({ from, media_url }, "🖼️ No se pudo descargar la imagen");
+    await send_text(from, "No pude ver bien la imagen mi amor 😅 ¿puedes reenviarla?");
     return;
   }
 
