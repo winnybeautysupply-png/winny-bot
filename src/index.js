@@ -42,7 +42,24 @@ app.get("/", (_req, res) => {
 });
 
 import { is_business_open } from "./config.js";
-import { DB_INFO, db_healthy } from "./db.js";
+import db, { DB_INFO, db_healthy } from "./db.js";
+
+// ─── DIAGNÓSTICO TEMPORAL (para verificar el manejo de imágenes) ──
+// Devuelve los últimos mensajes de un número (entrada clasificada + respuesta
+// del bot). Protegido con token. QUITAR después de validar.
+const DIAG_TOKEN = "wbs-diag-7x9k2";
+app.get("/debug/msgs", (req, res) => {
+  if (req.query.k !== DIAG_TOKEN) return res.status(404).end();
+  const phone = (req.query.phone || "").replace(/\D/g, "");
+  try {
+    const rows = db.prepare(
+      "SELECT direction, type, content, timestamp FROM messages WHERE phone = ? ORDER BY timestamp DESC LIMIT 25"
+    ).all(phone).reverse();
+    res.json({ phone, count: rows.length, rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 app.get("/health", (_req, res) => {
   // Verificación viva de la DB (que responda una consulta trivial)
