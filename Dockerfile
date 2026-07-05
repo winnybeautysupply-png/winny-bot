@@ -12,6 +12,9 @@ RUN npm install --omit=dev
 # Copiar código fuente
 COPY src/ ./src/
 
+# Copiar assets estáticos (fotos del catálogo servidas en /catalogo)
+COPY assets/ ./assets/
+
 # Crear directorios de datos
 RUN mkdir -p ./data/comprobantes
 

@@ -31,6 +31,10 @@ app.use("/facturas", express.static(config.invoices_dir));
 // Servir las imágenes generadas con IA como URL pública (para enviarlas por WhatsApp)
 app.use("/generadas", express.static(config.generated_dir));
 
+// Servir las FOTOS DEL CATÁLOGO (assets del repo) como URL pública para WhatsApp.
+// Permanentes: van dentro de la imagen Docker, no dependen de disco ni de links externos.
+app.use("/catalogo", express.static("assets/catalogo"));
+
 // ─── Health & landing ────────────────────────────────────────────
 app.get("/", (_req, res) => {
   res.send(`
