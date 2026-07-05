@@ -15,6 +15,7 @@ import { parse_incoming } from "./whatsapp.js";
 import { handle_incoming } from "./handlers/messages.js";
 import { setup_voice_ws } from "./voice.js";
 import { start_shipping_poller } from "./shipping_poller.js";
+import { start_improve_poller } from "./improve_poller.js";
 
 const app = express();
 // Twilio manda los webhooks como application/x-www-form-urlencoded
@@ -127,6 +128,7 @@ app.use((err, _req, res, _next) => {
 const server = http.createServer(app);
 setup_voice_ws(server); // adjunta el WS de ConversationRelay en /voice/ws
 start_shipping_poller(); // revisa estados de envío en la hoja cada 5 min
+start_improve_poller();  // auto-mejora: revisa conversaciones periódicamente
 
 server.listen(config.port, () => {
   logger.info({

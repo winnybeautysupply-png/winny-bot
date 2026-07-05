@@ -54,6 +54,69 @@ export async function append_order_row(values) {
   }
 }
 
+// Agrega una fila a una pestaña; si la pestaña no existe, la crea con encabezado.
+async function append_with_autocreate(tab, header, values) {
+  const sheets = get_client();
+  if (!sheets) return false;
+  try {
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: config.sheets.sheet_id, range: `${tab}!A1`,
+      valueInputOption: "USER_ENTERED", insertDataOption: "INSERT_ROWS",
+      requestBody: { values: [values] }
+    });
+    return true;
+  } catch (err) {
+    try {
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId: config.sheets.sheet_id,
+        requestBody: { requests: [{ addSheet: { properties: { title: tab } } }] }
+      });
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: config.sheets.sheet_id, range: `${tab}!A1`,
+        valueInputOption: "USER_ENTERED", insertDataOption: "INSERT_ROWS",
+        requestBody: { values: [header, values] }
+      });
+      return true;
+    } catch (e2) { logger.error({ err: e2.message, tab }, "Error escribiendo en Sheets (autocreate)"); return false; }
+  }
+}
+
+// AUTO-MEJORA: lee la base de conocimiento (pestaña FAQ: Pregunta, Respuesta, Activa).
+let _faqCache = null, _faqTime = 0;
+export async function get_faqs() {
+  if (_faqCache && Date.now() - _faqTime < 5 * 60 * 1000) return _faqCache;
+  const sheets = get_client();
+  if (!sheets) return [];
+  try {
+    const tab = config.sheets.faq_tab || "FAQ";
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: config.sheets.sheet_id, range: `${tab}!A1:C`
+    });
+    const rows = res.data.values || [];
+    const faqs = rows.slice(1) // fila 0 = encabezado
+      .map(r => ({
+        pregunta: (r[0] || "").toString().trim(),
+        respuesta: (r[1] || "").toString().trim(),
+        activa: !/^(no|false|0|inactiv)/i.test((r[2] ?? "si").toString().trim())
+      }))
+      .filter(f => f.pregunta && f.respuesta && f.activa);
+    _faqCache = faqs; _faqTime = Date.now();
+    return faqs;
+  } catch { return _faqCache || []; } // si la pestaña no existe aún, sin FAQs
+}
+
+// Escribe un hallazgo de revisión en la pestaña "Revisión".
+export async function append_review_row(values) {
+  return append_with_autocreate(config.sheets.review_tab || "Revisión",
+    ["Fecha", "Cliente", "Tema", "Calidad", "Problema", "Sugerencia", "¿Necesita humano?"], values);
+}
+
+// Escribe una FAQ sugerida (para que Winny la apruebe) en "FAQ_sugeridas".
+export async function append_faq_suggestion(values) {
+  return append_with_autocreate(config.sheets.faq_suggest_tab || "FAQ_sugeridas",
+    ["Fecha", "Pregunta", "Respuesta sugerida", "Origen (cliente)"], values);
+}
+
 // Registra un LOG de comando admin en la pestaña "Logs" (la crea si no existe).
 // values = [fecha, comando, resultado]
 export async function append_log_row(values) {

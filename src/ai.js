@@ -5,6 +5,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { config } from "./config.js";
 import { SYSTEM_PROMPT, OWNER_PROMPT } from "./prompts.js";
 import { catalog_summary } from "./catalog.js";
+import { get_faqs } from "./sheets.js";
 import { logger } from "./logger.js";
 
 // timeout + reintentos: si Claude responde lento o falla puntualmente, no cuelga el bot.
@@ -276,6 +277,51 @@ export async function analyze_image(base64, media_type = "image/jpeg", history =
   }
 }
 
+// ═══ AUTO-MEJORA — revisa una conversación y detecta problemas ═══
+const REVIEW_TOOL = {
+  name: "revision",
+  description: "Evalúa la calidad de una conversación entre el bot de Winny Beauty y una clienta.",
+  input_schema: {
+    type: "object",
+    properties: {
+      tema: { type: "string", description: "de qué trató (ej: precio pelucas, envío, disponibilidad)" },
+      calidad: { type: "number", description: "0 a 10: qué tan bien atendió el bot" },
+      problema: { type: "string", description: "el problema principal si lo hubo: respuesta débil/incompleta, info faltante, error de precio/inventario, mala interpretación, etc. Vacío si todo bien." },
+      respuesta_sugerida: { type: "string", description: "cómo DEBIÓ responder el bot, si hubo problema. Vacío si no aplica." },
+      faq_pregunta: { type: "string", description: "si la clienta hizo una pregunta útil y frecuente, la pregunta para agregarla a FAQ. Vacío si no aplica." },
+      faq_respuesta: { type: "string", description: "la respuesta correcta a esa FAQ, SOLO con info confirmada de la conversación/catálogo (NO inventes). Vacío si no aplica." },
+      necesita_humano: { type: "boolean", description: "true si esta conversación necesita que Winny intervenga (reclamo, negociación, algo que el bot no resolvió)" }
+    },
+    required: ["tema", "calidad", "necesita_humano"]
+  }
+};
+
+/**
+ * Revisa una conversación y devuelve un análisis estructurado (para auto-mejora).
+ * @param {Array} history - [{role, content}]
+ * @returns {Object|null}
+ */
+export async function review_conversation(history = []) {
+  if (!history.length) return null;
+  const convo = history.map(m => `${m.role === "user" ? "Cliente" : "Bot"}: ${m.content}`).join("\n");
+  try {
+    const response = await claude.messages.create({
+      model: config.claude.model,
+      max_tokens: 500,
+      temperature: 0,
+      system: "Eres un supervisor de calidad del WhatsApp de Winny Beauty Supply (pelucas/cabello, RD). Revisas conversaciones del bot con clientas y detectas si el bot atendió bien o hubo problemas (respuesta débil/incompleta, info faltante, error de precio/inventario, mala interpretación, o si dejó a la clienta sin cerrar la venta). Sé estricto pero justo. NUNCA inventes información en las sugerencias: si algo no se sabe, la sugerencia es pedir el dato o escalar a Winny.",
+      tools: [REVIEW_TOOL],
+      tool_choice: { type: "tool", name: "revision" },
+      messages: [{ role: "user", content: `Conversación a revisar:\n\n${convo}\n\nEvalúala.` }]
+    });
+    const block = response.content.find(b => b.type === "tool_use");
+    return block ? block.input : null;
+  } catch (err) {
+    logger.error({ err: err.message }, "Error revisando conversación");
+    return null;
+  }
+}
+
 // ═══ MODO JEFA — Winny (dueña) le da órdenes al bot ═══════════════
 const OWNER_TOOLS = [
   {
@@ -376,12 +422,21 @@ export async function generate_response(user_message, history = [], ctx = {}) {
       `• Solo ESCALA a Winny si un producto NO está ni en la lista de precios de arriba ni aquí. NUNCA inventes un precio que no esté en ninguna de las dos.`;
   } catch { /* si falla, sigue sin catálogo */ }
 
+  // Base de conocimiento (FAQ aprobadas por Winny) — crece sin tocar código.
+  let faq_text = "";
+  try {
+    const faqs = await get_faqs();
+    if (faqs.length) faq_text =
+      "\n\n═══ PREGUNTAS FRECUENTES (base de conocimiento aprobada — úsala como fuente confiable) ═══\n" +
+      faqs.map(f => `P: ${f.pregunta}\nR: ${f.respuesta}`).join("\n\n");
+  } catch { /* sin FAQs si falla */ }
+
   try {
     const response = await claude.messages.create({
       model: config.claude.model,
       max_tokens: 600,
       temperature: 0.7,
-      system: SYSTEM_PROMPT + catalog_text + ctx_text + name_text + history_text,
+      system: SYSTEM_PROMPT + catalog_text + faq_text + ctx_text + name_text + history_text,
       tools: TOOLS,
       messages
     });

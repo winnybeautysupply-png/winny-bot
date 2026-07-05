@@ -104,7 +104,35 @@ db.exec(`
     created_at INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_payments_ref ON payments(referencia);
+
+  CREATE TABLE IF NOT EXISTS reviews (
+    phone TEXT PRIMARY KEY,
+    last_reviewed INTEGER NOT NULL
+  );
 `);
+
+// AUTO-MEJORA: conversaciones con actividad reciente que NO se han revisado
+// desde su último mensaje. Devuelve [{phone, last_msg}]. Excluye a la dueña.
+export function get_conversations_to_review(windowMs = 24 * 60 * 60 * 1000, limit = 20) {
+  const since = Date.now() - windowMs;
+  return db.prepare(`
+    SELECT m.phone AS phone, MAX(m.timestamp) AS last_msg
+    FROM messages m
+    WHERE m.type = 'text'
+    GROUP BY m.phone
+    HAVING last_msg > ?
+       AND last_msg > COALESCE((SELECT r.last_reviewed FROM reviews r WHERE r.phone = m.phone), 0)
+    ORDER BY last_msg DESC
+    LIMIT ?
+  `).all(since, limit);
+}
+
+export function mark_reviewed(phone) {
+  db.prepare(`
+    INSERT INTO reviews (phone, last_reviewed) VALUES (?, ?)
+    ON CONFLICT(phone) DO UPDATE SET last_reviewed = excluded.last_reviewed
+  `).run(phone, Date.now());
+}
 
 // Chequeo vivo de la DB para /health (consulta trivial).
 export function db_healthy() {

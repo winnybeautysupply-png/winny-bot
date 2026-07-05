@@ -72,7 +72,17 @@ export const config = {
     // Pestaña de la hoja de PEDIDOS (vacío = primera hoja del GOOGLE_SHEET_ID)
     orders_tab: optional("GOOGLE_ORDERS_TAB", ""),
     // Pestaña de LOGS de comandos admin (se crea sola si no existe)
-    logs_tab: optional("GOOGLE_LOGS_TAB", "Logs")
+    logs_tab: optional("GOOGLE_LOGS_TAB", "Logs"),
+    // Auto-mejora: base de conocimiento y salidas de revisión (se crean solas)
+    faq_tab: optional("GOOGLE_FAQ_TAB", "FAQ"),
+    review_tab: optional("GOOGLE_REVIEW_TAB", "Revisión"),
+    faq_suggest_tab: optional("GOOGLE_FAQ_SUGGEST_TAB", "FAQ_sugeridas")
+  },
+
+  // Auto-mejora continua: el revisor evalúa conversaciones cada X minutos.
+  autoimprove: {
+    enabled: optional("AUTOIMPROVE", "on") !== "off",
+    interval_min: parseInt(optional("AUTOIMPROVE_INTERVAL_MIN", "360"), 10) // 6h
   },
 
   // Plantillas de WhatsApp (Twilio Content SID) para mensajes FUERA de la ventana
