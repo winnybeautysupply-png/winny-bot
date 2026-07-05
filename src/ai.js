@@ -260,6 +260,8 @@ export async function analyze_image(base64, media_type = "image/jpeg", history =
         ]
       }
     ];
+    logger.info({ media_type, base64_len: base64.length, bloque_image: true },
+      "🖼️ payload a Claude SÍ incluye el bloque image (base64)");
     const response = await claude.messages.create({
       model: config.claude.model,
       max_tokens: 500,

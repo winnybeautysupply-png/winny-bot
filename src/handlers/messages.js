@@ -111,26 +111,35 @@ async function handle_owner_image(parsed) {
   if (!dl) { await send_text(owner, "No me llegó bien la imagen jefa 😅 ¿me la reenvías?"); return; }
   const public_url = `${config.public_base_url}/comprobantes/${filename}`;
 
-  // Leer el recibo con OCR para extraer empresa + guía (para incluirlos en el mensaje a la clienta)
-  let envio = {};
+  // CLASIFICAR la imagen primero (NO asumir que es un recibo).
+  let envio = {}, cls = null;
   try {
     const b64 = fs.readFileSync(save_to).toString("base64");
     const media_type = (dl.mime || mime || "image/jpeg").split(";")[0];
-    const cls = await analyze_image(b64, media_type, []);
+    logger.info({ from: "owner", size: dl.size, media_type, base64_len: b64.length }, "🖼️ imagen de jefa → analizando con Claude (bloque image)");
+    cls = await analyze_image(b64, media_type, []);
     envio = cls?.datos_envio || {};
-    logger.info({ empresa: envio.empresa, guia: envio.guia }, "📦 recibo de envío leído (OCR)");
-  } catch (e) { logger.error({ err: e.message }, "no pude leer el recibo de envío"); }
+    logger.info({ categoria: cls?.categoria, es_recibo_envio: cls?.es_recibo_envio, empresa: envio.empresa, guia: envio.guia }, "🖼️ imagen de jefa clasificada");
+  } catch (e) { logger.error({ err: e.message }, "no pude analizar la imagen de la jefa"); }
 
+  const isReceipt = !!(cls && (cls.es_recibo_envio || cls.categoria === "recibo_envio"));
   const target = extract_phone(caption);
+
   if (target) {
+    // Winny puso un número → reenviar la imagen a esa clienta (sea recibo u otra cosa que quiera mandar).
     last_owner_receipt = null;
     await forward_shipping_receipt(target, public_url, envio);
-    await send_text(owner, `✅ Listo jefa, le reenvié el recibo a la clienta +${target} 📦${envio.empresa ? " (" + envio.empresa + ")" : ""}${envio.guia ? " guía " + envio.guia : ""} 💕`);
-  } else {
-    // No vino el número en la foto → guardar (con la guía leída) y pedir el número
+    await send_text(owner, `✅ Listo jefa, se lo reenvié a la clienta +${target} 📦${envio.empresa ? " (" + envio.empresa + ")" : ""}${envio.guia ? " guía " + envio.guia : ""} 💕`);
+  } else if (isReceipt) {
+    // ES un recibo de envío pero sin número → pedir el número.
     last_owner_receipt = { url: public_url, envio };
     await send_text(owner,
       `📦 Recibí el recibo de envío jefa${envio.empresa ? ` (${envio.empresa}${envio.guia ? ", guía " + envio.guia : ""})` : ""}. ¿A cuál clienta se lo reenvío? Mándame el número (ej: 8091234567) 💕`);
+  } else {
+    // NO es recibo y no hay número → NO asumir. Decir qué es y preguntar.
+    await send_text(owner,
+      `Jefa, esta imagen parece *${cls?.categoria || "otra cosa"}*${cls?.descripcion ? ` (${cls.descripcion.slice(0, 90)})` : ""} — no un recibo de envío. ` +
+      `Si quieres que se la reenvíe a una clienta, mándamela con su número al lado; o dime qué hago con ella 💕`);
   }
 }
 
@@ -308,6 +317,7 @@ async function handle_image(parsed, contact) {
   try {
     const b64 = fs.readFileSync(save_to).toString("base64");
     const media_type = (downloaded.mime || mime || "image/jpeg").split(";")[0];
+    logger.info({ from, bytes_descargados: downloaded.size, media_type, base64_len: b64.length }, "🖼️ imagen descargada (Twilio) → enviando a Claude");
     const history = format_history(get_recent_messages(from, 8));
     cls = await analyze_image(b64, media_type, history);
   } catch (err) {
