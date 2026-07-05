@@ -198,7 +198,7 @@ const IMAGE_CLASSIFY_TOOL = {
           "comprobante_bancario", "recibo_envio", "factura", "documento",
           "peluca_producto", "cabello_peinado", "persona_con_peluca",
           "captura_conversacion", "captura_producto",
-          "maniqui", "caja", "logo", "otro"
+          "maniqui", "caja", "logo", "foto_personal", "otro"
         ],
         description: "La categoría que MEJOR describe la imagen. OJO: 'comprobante_bancario' = transferencia/depósito/pago por banco (dinero). 'recibo_envio' = guía o recibo de una empresa de paquetería (Caribe Tours, Vimenpaq, autobús, etc.) para RETIRAR un paquete. NO son lo mismo."
       },
@@ -242,31 +242,44 @@ const IMAGE_CLASSIFY_TOOL = {
 };
 
 /**
- * Analiza una imagen con visión y devuelve su clasificación estructurada.
- * @param {string} base64 - imagen en base64
- * @param {string} media_type - ej "image/jpeg"
+ * Analiza una o VARIAS imágenes con visión y devuelve UNA clasificación
+ * estructurada. Si llegan varias (un álbum), las evalúa como UN solo envío.
+ * @param {Array<{data:string, media_type:string}>|string} images - arreglo de
+ *   imágenes {data(base64), media_type}. Acepta también un string base64 suelto
+ *   (compatibilidad hacia atrás → media_type "image/jpeg").
  * @param {Array} history - [{role, content}] para contexto del chat
  * @returns {Object|null}
  */
-export async function analyze_image(base64, media_type = "image/jpeg", history = []) {
+export async function analyze_image(images, history = []) {
+  // Normaliza: acepta un base64 suelto o un arreglo de {data, media_type}.
+  const imgs = Array.isArray(images)
+    ? images.filter(i => i && i.data)
+    : (images ? [{ data: images, media_type: "image/jpeg" }] : []);
+  if (!imgs.length) return null;
+  const n = imgs.length;
   try {
+    const blocks = imgs.map(i => ({
+      type: "image",
+      source: { type: "base64", media_type: i.media_type || "image/jpeg", data: i.data }
+    }));
+    blocks.push({
+      type: "text",
+      text: n > 1
+        ? `Estas ${n} imágenes me llegaron JUNTAS (un álbum), del mismo remitente y al mismo tiempo. Considéralas UN SOLO envío y clasifícalo con UNA sola categoría (la que mejor describe el conjunto). Si son fotos personales, memes o cosas NO del negocio, usa foto_personal. Si es un comprobante/transferencia de pago, márcalo y extrae los datos. Si es un recibo de paquetería, márcalo. Si es cabello/peluca, describe color, textura, largo, lace y densidad. Si es una captura o documento, lee el texto visible.`
+        : `Clasifica y describe esta imagen. Si es un comprobante/recibo de pago o transferencia, márcalo y extrae los datos. Si es un recibo de paquetería, márcalo. Si se ve cabello o peluca, describe color, textura, largo, lace y densidad. Si es una captura o documento, lee el texto visible. Si es una foto personal, meme o algo NO del negocio, usa foto_personal.`
+    });
     const messages = [
       ...history.map(m => ({ role: m.role, content: m.content })),
-      {
-        role: "user",
-        content: [
-          { type: "image", source: { type: "base64", media_type, data: base64 } },
-          { type: "text", text: "Clasifica y describe esta imagen que me envió una clienta. Si es un comprobante/recibo de pago o transferencia, márcalo. Si se ve cabello o peluca, describe color, textura, largo y tipo. Si es una captura o documento, lee el texto visible." }
-        ]
-      }
+      { role: "user", content: blocks }
     ];
-    logger.info({ media_type, base64_len: base64.length, bloque_image: true },
-      "🖼️ payload a Claude SÍ incluye el bloque image (base64)");
+    logger.info({ imagenes: n, media_types: imgs.map(i => i.media_type),
+      base64_total: imgs.reduce((s, i) => s + (i.data?.length || 0), 0), bloque_image: true },
+      "🖼️ payload a Claude SÍ incluye bloque(s) image (base64)");
     const response = await claude.messages.create({
       model: config.claude.model,
       max_tokens: 500,
       temperature: 0,
-      system: "Eres un clasificador de visión con OCR para el WhatsApp de Winny Beauty Supply (tienda de pelucas y cabello humano en RD). LEE todo el texto de la imagen y úsalo para clasificarla con precisión. NO asumas que todo es un comprobante de pago. DISTINGUE bien: (a) COMPROBANTE BANCARIO = una transferencia, depósito o pago por banco (app bancaria, montos en RD$, banco Popular/BHD/Reservas/Banreservas/APAP/etc.) → es_pago=true; extrae banco, monto, fecha, referencia y remitente en datos_pago. (b) RECIBO DE ENVÍO = una guía o recibo de una empresa de paquetería para retirar un paquete (Caribe Tours, Vimenca/Vimenpaq, Metro, Transporte Espinal, paquetería de autobús, Caribe Pack) → es_recibo_envio=true, es_pago=false; extrae empresa y número de guía en datos_envio. Son documentos DISTINTOS, JAMÁS los confundas. Si ves una peluca/cabello, describe color, largo, textura, lace y densidad.",
+      system: "Eres un clasificador de visión con OCR para el WhatsApp de Winny Beauty Supply (tienda de pelucas y cabello humano en RD). LEE todo el texto de la imagen y úsalo para clasificarla con precisión. NUNCA asumas qué es una imagen sin haberla mirado, y NO asumas que todo es un comprobante o un recibo. DISTINGUE bien: (a) COMPROBANTE BANCARIO = una transferencia, depósito o pago por banco (app bancaria, montos en RD$, banco Popular/BHD/Reservas/Banreservas/APAP/etc.) → es_pago=true; extrae banco, monto, fecha, referencia y remitente en datos_pago. (b) RECIBO DE ENVÍO = una guía o recibo de una empresa de paquetería para retirar un paquete (Caribe Tours, Vimenca/Vimenpaq, Metro, Transporte Espinal, paquetería de autobús, Caribe Pack) → es_recibo_envio=true, es_pago=false; extrae empresa y número de guía en datos_envio. Son documentos DISTINTOS, JAMÁS los confundas. (c) FOTO_PERSONAL = fotos de personas/familia/niños, paisajes, memes, capturas de redes u otras cosas que NO tienen que ver con la tienda → categoria=\"foto_personal\", es_pago=false, es_recibo_envio=false. Si ves una peluca/cabello, describe color, largo, textura, lace y densidad.",
       tools: [IMAGE_CLASSIFY_TOOL],
       tool_choice: { type: "tool", name: "clasificar_imagen" },
       messages

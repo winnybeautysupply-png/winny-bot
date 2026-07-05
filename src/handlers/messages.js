@@ -41,6 +41,12 @@ let last_owner_receipt = null;
 // MODO ADMIN: envío pendiente de confirmación ("enviar a X: Y" → espera "sí")
 let pending_admin_send = null;
 
+// BUFFER DE ÁLBUM: WhatsApp manda cada foto de un álbum como un webhook aparte.
+// Agrupamos las imágenes del MISMO número que llegan seguidas y las procesamos
+// como UN solo envío con UNA sola respuesta (no una respuesta por foto).
+const image_buffers = new Map(); // phone -> { items:[], timer, contact, isOwner }
+const IMAGE_BATCH_MS = 7000;     // espera tras la última foto antes de procesar el álbum
+
 // Normaliza un teléfono a dígitos con código país (DR: 1XXXXXXXXXX).
 function norm_phone(s) {
   let d = (s || "").replace(/\D/g, "");
@@ -100,47 +106,62 @@ async function forward_shipping_receipt(to, image_url, envio = {}) {
   logger.info({ to, empresa, guia, sid }, "📦 recibo de envío reenviado + pedido marcado como enviado");
 }
 
-// Winny (dueña) manda una FOTO (recibo de envío) desde su número → leerla y reenviarla a la clienta.
-async function handle_owner_image(parsed) {
-  const { from, media_url, mime, caption } = parsed;
+// Winny (dueña) manda una o VARIAS fotos → ya clasificadas como álbum.
+// Reenvía recibos de envío a la clienta; para cualquier otra imagen (incluidas
+// fotos personales) responde de forma NATURAL vía Claude (nunca asume qué es).
+async function route_owner_batch(from, downloaded, cls, contact) {
   const owner = config.business.owner_phone;
-  const filename = `envio-${Date.now()}.${(mime?.split("/")[1]) || "jpg"}`;
-  const save_to = path.join(config.receipts_dir, filename);
-
-  const dl = await download_media(media_url, save_to);
-  if (!dl) { await send_text(owner, "No me llegó bien la imagen jefa 😅 ¿me la reenvías?"); return; }
-  const public_url = `${config.public_base_url}/comprobantes/${filename}`;
-
-  // CLASIFICAR la imagen primero (NO asumir que es un recibo).
-  let envio = {}, cls = null;
-  try {
-    const b64 = fs.readFileSync(save_to).toString("base64");
-    const media_type = (dl.mime || mime || "image/jpeg").split(";")[0];
-    logger.info({ from: "owner", size: dl.size, media_type, base64_len: b64.length }, "🖼️ imagen de jefa → analizando con Claude (bloque image)");
-    cls = await analyze_image(b64, media_type, []);
-    envio = cls?.datos_envio || {};
-    logger.info({ categoria: cls?.categoria, es_recibo_envio: cls?.es_recibo_envio, empresa: envio.empresa, guia: envio.guia }, "🖼️ imagen de jefa clasificada");
-  } catch (e) { logger.error({ err: e.message }, "no pude analizar la imagen de la jefa"); }
-
+  const n = downloaded.length;
+  const rep = downloaded[0];
+  const public_url = `${config.public_base_url}/comprobantes/${rep.filename}`;
+  const envio = cls?.datos_envio || {};
   const isReceipt = !!(cls && (cls.es_recibo_envio || cls.categoria === "recibo_envio"));
-  const target = extract_phone(caption);
+
+  // ¿Winny puso el número de una clienta en algún caption del álbum?
+  let target = null;
+  for (const d of downloaded) { const t = extract_phone(d.caption); if (t) { target = t; break; } }
 
   if (target) {
-    // Winny puso un número → reenviar la imagen a esa clienta (sea recibo u otra cosa que quiera mandar).
+    // Winny puso un número → reenviar la imagen a esa clienta (recibo u otra cosa que quiera mandar).
     last_owner_receipt = null;
     await forward_shipping_receipt(target, public_url, envio);
     await send_text(owner, `✅ Listo jefa, se lo reenvié a la clienta +${target} 📦${envio.empresa ? " (" + envio.empresa + ")" : ""}${envio.guia ? " guía " + envio.guia : ""} 💕`);
-  } else if (isReceipt) {
+    return;
+  }
+
+  if (isReceipt) {
     // ES un recibo de envío pero sin número → pedir el número.
     last_owner_receipt = { url: public_url, envio };
     await send_text(owner,
       `📦 Recibí el recibo de envío jefa${envio.empresa ? ` (${envio.empresa}${envio.guia ? ", guía " + envio.guia : ""})` : ""}. ¿A cuál clienta se lo reenvío? Mándame el número (ej: 8091234567) 💕`);
-  } else {
-    // NO es recibo y no hay número → NO asumir. Decir qué es y preguntar.
-    await send_text(owner,
-      `Jefa, esta imagen parece *${cls?.categoria || "otra cosa"}*${cls?.descripcion ? ` (${cls.descripcion.slice(0, 90)})` : ""} — no un recibo de envío. ` +
-      `Si quieres que se la reenvíe a una clienta, mándamela con su número al lado; o dime qué hago con ella 💕`);
+    return;
   }
+
+  // NO es recibo → responder de forma NATURAL como su asistente (BUG 1/3 + regla de fotos personales).
+  // El clasificador YA MIRÓ la imagen: le pasamos su lectura a Claude para que conteste con criterio.
+  const desc = (cls?.descripcion || "").slice(0, 220);
+  const captions = downloaded.map(d => d.caption).filter(Boolean).join(" | ");
+  const synth =
+    `[Winny (la JEFA) te envió ${n > 1 ? `${n} imágenes juntas (un álbum)` : "una imagen"} por WhatsApp. ` +
+    `Ya la(s) miré por ti — clasificación de visión: "${cls?.categoria || "desconocida"}"${desc ? ` — ${desc}` : ""}. ` +
+    (captions ? `Junto a la(s) imagen(es) escribió: "${captions}". ` : "") +
+    `Si NO tiene que ver con el negocio (fotos personales, familia, memes, etc.), respóndele de forma natural, cálida y BREVE como su asistente; NO asumas que es un recibo ni un comprobante, y NO le hagas discurso de venta. ` +
+    `Si es un recibo/comprobante o algo del negocio, dile en una línea qué ves y pregúntale qué quiere hacer con ello.]`;
+  const ai = await generate_owner_response(synth, format_history(get_recent_messages(from, 8)));
+
+  // Puede pedir reenviar algo a una clienta (herramienta enviar_mensaje_cliente).
+  for (const tool of ai.tool_calls) {
+    if (tool.name === "enviar_mensaje_cliente") {
+      const t = (tool.input.telefono || "").replace(/\D/g, "") || last_customer_from || last_comprobante_from;
+      if (!t) { await send_text(owner, "¿A cuál clienta se lo mando jefa? Pásame el número 💕"); continue; }
+      const sid = await send_text(t, tool.input.mensaje);
+      save_message({ phone: t, direction: "out", type: "text", content: tool.input.mensaje, wa_message_id: sid });
+      await send_text(owner, `✅ Listo jefa, le mandé a la clienta (+${t}):\n"${tool.input.mensaje}"`);
+    }
+  }
+  const reply = ai.text || (n > 1 ? "Recibí tus fotos jefa 💕" : "Recibí tu foto jefa 💕");
+  const sid = await send_text(owner, reply);
+  save_message({ phone: owner, direction: "out", type: "text", content: reply, wa_message_id: sid });
 }
 
 // Formatea un número con separador de miles (ej: 2350 -> "2,350")
@@ -300,60 +321,96 @@ async function process_payment_receipt(parsed, contact, save_to, filename, cls =
   }
 }
 
-async function handle_image(parsed, contact) {
-  const { from, media_url, mime } = parsed;
-  const filename = `${from}-${Date.now()}.${(mime?.split("/")[1]) || "jpg"}`;
-  const save_to = path.join(config.receipts_dir, filename);
+// Encola una imagen en el buffer de su remitente y (re)arma el temporizador.
+// Cuando pasan IMAGE_BATCH_MS sin una foto nueva, procesa TODO el álbum de una.
+function buffer_image(parsed, contact) {
+  const from = parsed.from;
+  const isOwner = is_owner(from);
+  let buf = image_buffers.get(from);
+  if (!buf) { buf = { items: [], contact, isOwner }; image_buffers.set(from, buf); }
+  buf.contact = contact; buf.isOwner = isOwner;
+  buf.items.push({ media_url: parsed.media_url, mime: parsed.mime, caption: parsed.caption, id: parsed.id });
+  if (buf.timer) clearTimeout(buf.timer);
+  buf.timer = setTimeout(() => {
+    image_buffers.delete(from);
+    process_image_batch(from, buf.items, buf.contact, buf.isOwner)
+      .catch(err => logger.error({ err: err.message, from }, "Error procesando álbum de imágenes"));
+  }, IMAGE_BATCH_MS);
+  logger.info({ from, en_buffer: buf.items.length, isOwner }, "🖼️ imagen encolada (buffer de álbum)");
+}
 
-  const downloaded = await download_media(media_url, save_to);
-  if (!downloaded) {
-    logger.error({ from, media_url }, "🖼️ No se pudo descargar la imagen");
-    await send_text(from, "No pude ver bien la imagen mi amor 😅 ¿puedes reenviarla?");
+// Descarga TODAS las imágenes del álbum, las manda a Claude en UNA sola llamada
+// y enruta según quién las envió (jefa vs clienta) con UNA sola respuesta.
+async function process_image_batch(from, items, contact, isOwner) {
+  if (!items || !items.length) return;
+  const owner = config.business.owner_phone;
+
+  // 1) Descargar cada imagen y convertirla a base64.
+  const downloaded = [];
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    const ext = (it.mime?.split("/")[1] || "jpg").split(";")[0];
+    const filename = `${isOwner ? "jefa" : from}-${Date.now()}-${i}.${ext}`;
+    const save_to = path.join(config.receipts_dir, filename);
+    const dl = await download_media(it.media_url, save_to);
+    if (!dl) { logger.error({ from, i }, "🖼️ no pude descargar una imagen del álbum"); continue; }
+    const media_type = (dl.mime || it.mime || "image/jpeg").split(";")[0];
+    const data = fs.readFileSync(save_to).toString("base64");
+    downloaded.push({ save_to, filename, media_type, data, caption: it.caption, id: it.id });
+  }
+  if (!downloaded.length) {
+    await send_text(isOwner ? owner : from,
+      isOwner ? "No me llegaron bien las imágenes jefa 😅 ¿me las reenvías?"
+              : "No pude ver bien la imagen mi amor 😅 ¿puedes reenviarla?");
     return;
   }
 
-  // 1) VISIÓN: analizar la imagen ANTES de decidir qué hacer.
-  let cls = null;
-  try {
-    const b64 = fs.readFileSync(save_to).toString("base64");
-    const media_type = (downloaded.mime || mime || "image/jpeg").split(";")[0];
-    logger.info({ from, bytes_descargados: downloaded.size, media_type, base64_len: b64.length }, "🖼️ imagen descargada (Twilio) → enviando a Claude");
-    const history = format_history(get_recent_messages(from, 8));
-    cls = await analyze_image(b64, media_type, history);
-  } catch (err) {
-    logger.error({ err: err.message, from }, "Error leyendo/analizando la imagen");
-  }
+  const n = downloaded.length;
+  // 2) UNA sola llamada a Claude con TODAS las imágenes (bloques image en base64).
+  const history = format_history(get_recent_messages(from, 8));
+  logger.info({ from, imagenes: n, isOwner, media_types: downloaded.map(d => d.media_type) },
+    "🖼️ álbum descargado → enviando TODO a Claude en una sola llamada");
+  const cls = await analyze_image(downloaded.map(d => ({ data: d.data, media_type: d.media_type })), history);
 
   const cat = cls?.categoria || "desconocida";
   const conf = cls?.confianza ?? 0;
-  logger.info(
-    { from, categoria: cat, es_pago: cls?.es_pago, confianza: conf, desc: (cls?.descripcion || "").slice(0, 140) },
-    "🖼️ imagen clasificada (visión)"
-  );
+  logger.info({ from, imagenes: n, categoria: cat, es_pago: cls?.es_pago, es_recibo_envio: cls?.es_recibo_envio, confianza: conf, desc: (cls?.descripcion || "").slice(0, 140) },
+    "🖼️ álbum clasificado (visión)");
 
-  // Guardar en el historial con la descripción de visión (para dar contexto al chat).
+  // 3) Guardar UNA entrada descriptiva en el historial (contexto para el chat).
   save_message({
     phone: from, direction: "in", type: "image",
     content: cls
-      ? `[imagen: ${cat}] ${cls.descripcion || ""}${cls.texto_visible ? " | texto: " + cls.texto_visible : ""}`
-      : "(imagen)",
-    media_path: save_to, wa_message_id: parsed.id
+      ? `[${n > 1 ? n + " imágenes" : "imagen"}: ${cat}] ${cls.descripcion || ""}${cls.texto_visible ? " | texto: " + cls.texto_visible : ""}`
+      : `(${n > 1 ? n + " imágenes" : "imagen"})`,
+    media_path: downloaded[0].save_to, wa_message_id: downloaded[0].id
   });
 
-  // 2) Si la visión falló → pedir aclaración (NUNCA asumir comprobante).
+  // 4) Enrutar según remitente.
+  if (isOwner) { await route_owner_batch(from, downloaded, cls, contact); return; }
+  await route_customer_batch(from, downloaded, cls, contact);
+}
+
+// Enruta un álbum de una CLIENTA: pago / recibo de envío / recomendación / contenido.
+async function route_customer_batch(from, downloaded, cls, contact) {
+  const rep = downloaded[0];
+  const cat = cls?.categoria || "desconocida";
+  const conf = cls?.confianza ?? 0;
+
+  // Si la visión falló → pedir aclaración (NUNCA asumir comprobante).
   if (!cls) {
     await send_text(from, "Recibí tu imagen mi amor 💕 ¿me dices qué es? (¿un comprobante de pago, una peluca que te gustó, o una foto de referencia?) para ayudarte mejor ✨");
     return;
   }
 
-  // 3) COMPROBANTE BANCARIO (pago) → flujo de verificación de pago (con datos OCR).
+  // COMPROBANTE BANCARIO (pago) → flujo de verificación de pago (con datos OCR).
   if ((cls.es_pago || cat === "comprobante_bancario") && !cls.es_recibo_envio && conf >= 0.5) {
     logger.info({ from, datos_pago: cls.datos_pago }, "🖼️→ ruta: COMPROBANTE BANCARIO (pago)");
-    await process_payment_receipt(parsed, contact, save_to, filename, cls);
+    await process_payment_receipt({ from }, contact, rep.save_to, rep.filename, cls);
     return;
   }
 
-  // 3b) RECIBO DE ENVÍO / PAQUETERÍA que manda una clienta → responder con la guía, NO es pago.
+  // RECIBO DE ENVÍO / PAQUETERÍA que manda una clienta → responder con la guía, NO es pago.
   if (cls.es_recibo_envio || cat === "recibo_envio") {
     const e = cls.datos_envio || {};
     logger.info({ from, datos_envio: e }, "🖼️→ ruta: recibo de ENVÍO (de clienta)");
@@ -365,12 +422,22 @@ async function handle_image(parsed, contact) {
     return;
   }
 
-  // 4) CABELLO / PELUCA / PERSONA / PRODUCTO → recomendar lo más parecido del catálogo.
+  // FOTO PERSONAL / meme / algo NO del negocio → responder natural y breve (no asumir nada).
+  if (cat === "foto_personal") {
+    logger.info({ from, cat }, "🖼️→ ruta: foto personal (clienta)");
+    const synth =
+      `[La clienta me envió ${downloaded.length > 1 ? "unas fotos" : "una foto"} que NO tienen que ver con una compra ` +
+      `(visión: ${cls.descripcion || "foto personal"}). Respóndele de forma natural, cálida y breve; ` +
+      `no le hagas discurso de venta ni asumas que es un comprobante. Si quieres, invítala con cariño a ver el catálogo si busca algo.]`;
+    await handle_text({ from, type: "text", text: synth }, contact);
+    return;
+  }
+
+  // CABELLO / PELUCA / PERSONA / PRODUCTO → recomendar lo más parecido del catálogo.
   if (["peluca_producto", "cabello_peinado", "persona_con_peluca", "captura_producto", "maniqui"].includes(cat)) {
     logger.info({ from, cat }, "🖼️→ ruta: RECOMENDACIÓN por imagen");
     const a = cls.atributos_cabello || {};
-    // (1) Buscar coincidencias REALES en el catálogo por los atributos detectados y enviarlas (foto+precio).
-    //     Determinístico: no depende de que la IA "decida" llamar la herramienta.
+    // Buscar coincidencias REALES en el catálogo por los atributos detectados y enviarlas (foto+precio).
     const query = [a.textura, a.color, a.largo, "peluca"].filter(Boolean).join(" ") || cls.descripcion || "peluca";
     const matches = await find_products(query, 2);
     logger.info({ from, query, coincidencias: matches.length }, "🔎 recomendación por foto");
@@ -381,27 +448,27 @@ async function handle_image(parsed, contact) {
       await send_text(from, "¿Te gustó alguna? Dime cuál y te ayudo a que la tuya salga hoy mismo 🛍️💖");
       return;
     }
-    // (2) Sin coincidencia con foto real → flujo conversacional (recomienda por texto / puede generar imagen).
+    // Sin coincidencia con foto real → flujo conversacional (recomienda por texto / puede generar imagen).
     const attrs2 = [a.tipo, a.textura, a.color, a.largo].filter(Boolean).join(", ");
     const synth =
       `[La clienta me envió una FOTO. Análisis de visión: ${cls.descripcion}${attrs2 ? ` (cabello visible: ${attrs2})` : ""}. ` +
       `DEBES en ESTE mensaje: comentar con cariño lo que se ve y recomendarle 2-3 pelucas del catálogo MÁS PARECIDAS CON SU PRECIO ` +
       `(ej: "se parece a nuestra Peluca rizada 28\" — RD$9,000"). 🚫 PROHIBIDO responder solo "déjame mostrarte" o "ahora mismo".]`;
-    await handle_text({ ...parsed, type: "text", text: synth }, contact);
+    await handle_text({ from, type: "text", text: synth }, contact);
     return;
   }
 
-  // 5) CAPTURA DE CONVERSACIÓN / DOCUMENTO / FACTURA / etc. → responder al contenido/texto.
+  // CAPTURA DE CONVERSACIÓN / DOCUMENTO / FACTURA / etc. → responder al contenido/texto.
   if (["captura_conversacion", "documento", "factura", "caja", "logo"].includes(cat)) {
     logger.info({ from, cat }, "🖼️→ ruta: responder al CONTENIDO");
     const synth =
       `[La clienta me envió una imagen tipo "${cat}". Análisis: ${cls.descripcion}.` +
       `${cls.texto_visible ? ` Texto en la imagen: "${cls.texto_visible}".` : ""} Responde de forma útil según ese contenido.]`;
-    await handle_text({ ...parsed, type: "text", text: synth }, contact);
+    await handle_text({ from, type: "text", text: synth }, contact);
     return;
   }
 
-  // 6) OTRO / baja confianza → pedir aclaración (jamás asumir comprobante).
+  // OTRO / baja confianza → pedir aclaración (jamás asumir comprobante).
   logger.info({ from, cat, conf }, "🖼️→ ruta: ACLARACIÓN (otro/baja confianza)");
   await send_text(from, "Recibí tu imagen mi amor 💕 Para ayudarte mejor, ¿me dices qué necesitas con ella? (¿es un comprobante de pago, una peluca que te gustó, o una referencia de estilo/color?) ✨");
 }
@@ -492,11 +559,12 @@ function parse_owner_command(text) {
     /\b(ya\s+est[aá]|todo\s+bien|correcto)\b/.test(t);
   if (isConfirm) return { action: "confirm", phone };
 
-  // Señales DÉBILES (sí / ok / dale / no a secas): solo cuentan si hay un
-  // comprobante pendiente. Si no hay nada pendiente, se trata como charla normal.
-  if (/^(s[ií]+|ok|okay|dale|listo|perfecto|de una|hecho)\b/.test(t))
+  // Señales DÉBILES (sí / ok / dale / no A SECAS): solo cuentan si el mensaje es
+  // ESA palabra sola (no una frase). Así "no es un recibo, son fotos de mis hijas"
+  // NO se confunde con un rechazo de pago → cae a charla normal (modo jefa vía Claude).
+  if (/^(s[ií]+|ok|okay|dale|listo|perfecto|de una|hecho)[\s.!]*$/.test(t))
     return { action: "confirm", phone, weak: true };
-  if (/^(no|nop|negativo)\b/.test(t))
+  if (/^(no|nop|negativo)[\s.!]*$/.test(t))
     return { action: "reject", phone, weak: true };
 
   return null;
@@ -935,10 +1003,10 @@ export async function handle_incoming(parsed, contact_profile) {
     }
     return; // El mensaje de la dueña NUNCA cae al bot de clientas.
   }
-  // Winny manda una FOTO (recibo de envío) → reenviarla a la clienta, NO tratarla como comprobante.
+  // Winny manda una o varias FOTOS → al buffer de álbum (se clasifican y responden juntas).
   if (is_owner(from) && type === "image") {
-    try { await handle_owner_image(parsed); }
-    catch (err) { logger.error({ err: err.message, from }, "Error en imagen de Winny (recibo de envío)"); }
+    try { buffer_image(parsed, contact); }
+    catch (err) { logger.error({ err: err.message, from }, "Error encolando imagen de Winny"); }
     return;
   }
 
@@ -950,7 +1018,7 @@ export async function handle_incoming(parsed, contact_profile) {
       await handle_text(parsed, contact);
       break;
     case "image":
-      await handle_image(parsed, contact);
+      buffer_image(parsed, contact); // agrupa álbumes → una sola respuesta
       break;
     case "audio":
       await handle_audio(parsed, contact);
