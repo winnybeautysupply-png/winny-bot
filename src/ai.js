@@ -11,6 +11,9 @@ import { logger } from "./logger.js";
 // timeout + reintentos: si Claude responde lento o falla puntualmente, no cuelga el bot.
 const claude = new Anthropic({ apiKey: config.claude.api_key, timeout: 45000, maxRetries: 2 });
 
+// DIAGNÓSTICO TEMPORAL: último resultado de la visión (para /debug). QUITAR luego.
+export const __diag = { lastVision: null };
+
 // Tools que Claude puede llamar para acciones especiales
 const TOOLS = [
   {
@@ -285,9 +288,13 @@ export async function analyze_image(images, history = []) {
       messages
     });
     const block = response.content.find(b => b.type === "tool_use");
+    __diag.lastVision = { ok: !!block, imgs: n, stop: response.stop_reason,
+      types: response.content.map(b => b.type), cat: block?.input?.categoria || null, at: Date.now() };
     return block ? block.input : null;
   } catch (err) {
-    logger.error({ err: err.message }, "Error analizando imagen (visión)");
+    __diag.lastVision = { ok: false, imgs: n, error: err.message,
+      status: err.status || err.statusCode || null, name: err.name || null, at: Date.now() };
+    logger.error({ err: err.message, status: err.status }, "Error analizando imagen (visión)");
     return null;
   }
 }

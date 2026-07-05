@@ -48,6 +48,7 @@ import db, { DB_INFO, db_healthy } from "./db.js";
 // Devuelve los últimos mensajes de un número (entrada clasificada + respuesta
 // del bot). Protegido con token. QUITAR después de validar.
 const DIAG_TOKEN = "wbs-diag-7x9k2";
+import { __diag } from "./ai.js";
 app.get("/debug/msgs", (req, res) => {
   if (req.query.k !== DIAG_TOKEN) return res.status(404).end();
   const phone = (req.query.phone || "").replace(/\D/g, "");
@@ -55,7 +56,7 @@ app.get("/debug/msgs", (req, res) => {
     const rows = db.prepare(
       "SELECT direction, type, content, timestamp FROM messages WHERE phone = ? ORDER BY timestamp DESC LIMIT 25"
     ).all(phone).reverse();
-    res.json({ phone, count: rows.length, rows });
+    res.json({ phone, count: rows.length, rows, lastVision: __diag.lastVision });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
