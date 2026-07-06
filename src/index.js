@@ -48,19 +48,6 @@ app.get("/", (_req, res) => {
 import { is_business_open } from "./config.js";
 import { DB_INFO, db_healthy } from "./db.js";
 
-// ─── CHEQUEO TEMPORAL del catálogo (QUITAR luego) ────────────────
-import { get_catalog, find_products } from "./catalog.js";
-app.get("/debug/catalog", async (req, res) => {
-  if (req.query.k !== "wbs-diag-7x9k2") return res.status(404).end();
-  try {
-    const cat = await get_catalog();
-    const queries = ["peluca roja", "fucsia", "cobre ginger", "castaña caramelo", "castaña mecha rubia"];
-    const tests = {};
-    for (const q of queries) tests[q] = (await find_products(q, 2)).map(p => `#${p.codigo} ${p.nombre} — RD$${p.precio_detalle} (${p.media_url ? "con foto" : "sin foto"})`);
-    res.json({ total: cat.length, disponibles: cat.filter(p => p.disponible).length, tests });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
 app.get("/health", (_req, res) => {
   // Verificación viva de la DB (que responda una consulta trivial)
   let db_ok = false;
