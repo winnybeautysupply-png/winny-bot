@@ -126,6 +126,11 @@ app.get("/instagram/webhook", (req, res) => {
 });
 app.post("/instagram/webhook", (req, res) => {
   res.sendStatus(200); // responder rápido para que Meta no reintente
+  // Diagnóstico: registrar TODO lo que llega al webhook de IG (crudo) para saber
+  // si Meta está entregando los DMs y con qué estructura.
+  try {
+    logger.info({ raw: JSON.stringify(req.body).slice(0, 800) }, "📩 IG webhook POST recibido");
+  } catch { logger.info("📩 IG webhook POST recibido (body no serializable)"); }
   handle_ig_event(req.body).catch(err => logger.error({ err: err.message }, "Error en webhook de Instagram"));
 });
 
