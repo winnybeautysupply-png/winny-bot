@@ -10,13 +10,26 @@
 // ═══════════════════════════════════════════════════════════════
 import fs from "fs";
 import path from "path";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
 
 const ACCOUNT_SID = config.twilio.account_sid;
 const API_KEY_SID = config.twilio.api_key_sid;
 const API_KEY_SECRET = config.twilio.api_key_secret;
-const FROM = `whatsapp:${config.twilio.whatsapp_number}`; // ej: whatsapp:+18492489801
+const FROM = `whatsapp:${config.twilio.whatsapp_number}`; // remitente por defecto (número primario)
+
+// MULTI-NÚMERO: el bot puede atender varios números de WhatsApp con un solo
+// cerebro. Guardamos, por cada webhook entrante, DESDE cuál de nuestros números
+// llegó el mensaje (el campo "To" de Twilio) para responderle a la clienta desde
+// ESE mismo número. Fuera de un webhook (pollers, avisos) se usa el primario.
+export const botNumberContext = new AsyncLocalStorage();
+function current_from() {
+  const store = botNumberContext.getStore();
+  const n = store?.from;
+  // Solo aceptamos un remitente con forma whatsapp:+E164 (Twilio siempre manda así).
+  return (n && /^whatsapp:\+\d{6,}$/.test(n)) ? n : FROM;
+}
 
 const MESSAGES_URL = `https://api.twilio.com/2010-04-01/Accounts/${ACCOUNT_SID}/Messages.json`;
 const AUTH_HEADER = "Basic " + Buffer.from(`${API_KEY_SID}:${API_KEY_SECRET}`).toString("base64");
@@ -41,6 +54,8 @@ async function fetch_timeout(url, options = {}, ms = 20000) {
 // ─── POST genérico a la API de mensajes de Twilio ────────────────
 // Nunca lanza: ante error de red/timeout/HTTP devuelve null (el handler sigue).
 async function post_message(params) {
+  // Inyecta el remitente correcto (número que recibió el mensaje) si no viene dado.
+  if (!params.From) params.From = current_from();
   const body = new URLSearchParams(params);
   try {
     const res = await fetch_timeout(MESSAGES_URL, {
@@ -65,7 +80,7 @@ async function post_message(params) {
 
 // ─── Enviar mensaje de texto ────────────────────────────────────
 export async function send_text(to, body) {
-  return post_message({ From: FROM, To: wa(to), Body: body });
+  return post_message({ To: wa(to), Body: body });
 }
 
 // ─── Enviar una PLANTILLA de WhatsApp (Twilio Content SID) ──────
@@ -73,7 +88,7 @@ export async function send_text(to, body) {
 // `variables` = objeto {"1":"valor","2":"valor"} con las variables de la plantilla.
 export async function send_wa_template(to, content_sid, variables = {}) {
   return post_message({
-    From: FROM, To: wa(to),
+    To: wa(to),
     ContentSid: content_sid,
     ContentVariables: JSON.stringify(variables)
   });
@@ -108,7 +123,7 @@ export async function send_list(to, body, _button_label, sections) {
 // así que mandamos solo el caption como texto y dejamos la nota.
 export async function send_image(to, image_url_or_path, caption = "") {
   if (image_url_or_path && image_url_or_path.startsWith("http")) {
-    return post_message({ From: FROM, To: wa(to), Body: caption || "", MediaUrl: image_url_or_path });
+    return post_message({ To: wa(to), Body: caption || "", MediaUrl: image_url_or_path });
   }
   // Ruta local: no es pública → mandamos el texto del caption
   logger.warn({ image_url_or_path }, "send_image con ruta local — enviando solo caption (Twilio necesita URL pública)");
@@ -169,6 +184,7 @@ export function parse_incoming(body) {
   const base = {
     id: body.MessageSid,
     from,
+    to: body.To || "",              // nuestro número que recibió el mensaje (whatsapp:+...)
     timestamp: Date.now(),
     profile_name: body.ProfileName // Twilio incluye el nombre del contacto
   };

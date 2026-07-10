@@ -11,7 +11,7 @@ import express from "express";
 import http from "http";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
-import { parse_incoming } from "./whatsapp.js";
+import { parse_incoming, botNumberContext } from "./whatsapp.js";
 import { handle_incoming } from "./handlers/messages.js";
 import { setup_voice_ws } from "./voice.js";
 import { start_shipping_poller } from "./shipping_poller.js";
@@ -96,9 +96,13 @@ app.post("/webhook", async (req, res) => {
 
     const contact_profile = parsed.profile_name ? { name: parsed.profile_name } : null;
 
-    // Procesamiento async — no bloquea
-    handle_incoming(parsed, contact_profile).catch(err => {
-      logger.error({ err: err.message, from: parsed.from }, "Error procesando mensaje");
+    // Procesamiento async — no bloquea. Lo corremos dentro del contexto del número
+    // que RECIBIÓ el mensaje (parsed.to) para que el bot le responda a la clienta
+    // desde ESE mismo número (soporte multi-número con un solo cerebro).
+    botNumberContext.run({ from: parsed.to }, () => {
+      handle_incoming(parsed, contact_profile).catch(err => {
+        logger.error({ err: err.message, from: parsed.from }, "Error procesando mensaje");
+      });
     });
   } catch (err) {
     logger.error({ err: err.message, body: req.body }, "Error en webhook POST");
