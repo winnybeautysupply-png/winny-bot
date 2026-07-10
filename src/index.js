@@ -36,6 +36,11 @@ app.use("/generadas", express.static(config.generated_dir));
 // Permanentes: van dentro de la imagen Docker, no dependen de disco ni de links externos.
 app.use("/catalogo", express.static("assets/catalogo"));
 
+// Páginas legales (para la App Review de Meta): política de privacidad y eliminación de datos.
+import path from "path";
+app.get("/privacy", (_req, res) => res.sendFile(path.resolve("assets/legal/privacy.html")));
+app.get("/data-deletion", (_req, res) => res.sendFile(path.resolve("assets/legal/data-deletion.html")));
+
 // ─── Health & landing ────────────────────────────────────────────
 app.get("/", (_req, res) => {
   res.send(`
