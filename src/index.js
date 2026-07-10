@@ -14,6 +14,7 @@ import { logger } from "./logger.js";
 import { parse_incoming, botNumberContext } from "./whatsapp.js";
 import { handle_incoming } from "./handlers/messages.js";
 import { setup_voice_ws } from "./voice.js";
+import { verify_webhook as ig_verify, handle_ig_event, ig_enabled } from "./instagram.js";
 import { start_shipping_poller } from "./shipping_poller.js";
 import { start_improve_poller } from "./improve_poller.js";
 
@@ -62,6 +63,7 @@ app.get("/health", (_req, res) => {
     commit: (process.env.RENDER_GIT_COMMIT || "unknown").slice(0, 7),
     model: config.claude.model,
     owner_last4: (config.business.owner_phone || "").slice(-4),
+    instagram: ig_enabled(),
     db: { path: DB_INFO.path, persistent: DB_INFO.persistent, memory: DB_INFO.memory, ok: db_ok }
   });
 });
@@ -107,6 +109,19 @@ app.post("/webhook", async (req, res) => {
   } catch (err) {
     logger.error({ err: err.message, body: req.body }, "Error en webhook POST");
   }
+});
+
+// ─── INSTAGRAM (Meta directo) ────────────────────────────────────
+// GET  = verificación del webhook (Meta manda hub.challenge)
+// POST = eventos de mensajes de IG → responde con el mismo cerebro
+app.get("/instagram/webhook", (req, res) => {
+  const r = ig_verify(req.query);
+  if (r.ok) return res.status(200).send(String(r.challenge));
+  return res.sendStatus(403);
+});
+app.post("/instagram/webhook", (req, res) => {
+  res.sendStatus(200); // responder rápido para que Meta no reintente
+  handle_ig_event(req.body).catch(err => logger.error({ err: err.message }, "Error en webhook de Instagram"));
 });
 
 // ─── VOZ (Fase 1): Twilio pega aquí cuando entra una LLAMADA ─────

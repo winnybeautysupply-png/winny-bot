@@ -85,6 +85,15 @@ export const config = {
     interval_min: parseInt(optional("AUTOIMPROVE_INTERVAL_MIN", "360"), 10) // 6h
   },
 
+  // Instagram (Meta directo) — el bot responde DMs de IG con el mismo cerebro.
+  // Se activa solo si hay IG_TOKEN. El webhook de verificación funciona igual sin token.
+  instagram: {
+    token: optional("IG_TOKEN", ""),                      // access token de la página/IG (enviar mensajes)
+    verify_token: optional("IG_VERIFY_TOKEN", "winny-ig-2026"), // token para verificar el webhook en Meta
+    ig_id: optional("IG_ID", ""),                         // (opcional) IG-scoped id de NUESTRA cuenta
+    app_secret: optional("IG_APP_SECRET", "")             // (opcional) para verificar la firma del webhook
+  },
+
   // Plantillas de WhatsApp (Twilio Content SID) para mensajes FUERA de la ventana
   // de 24h (notificación "en camino" y "entregado"). Si están vacías, se usa
   // mensaje de sesión normal (solo funciona dentro de las 24h).
