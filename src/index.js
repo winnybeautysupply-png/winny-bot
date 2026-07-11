@@ -15,6 +15,7 @@ import { parse_incoming, botNumberContext } from "./whatsapp.js";
 import { handle_incoming } from "./handlers/messages.js";
 import { setup_voice_ws } from "./voice.js";
 import { verify_webhook as ig_verify, handle_ig_event, ig_enabled } from "./instagram.js";
+import { mount_admin } from "./admin.js";
 import { start_shipping_poller } from "./shipping_poller.js";
 import { start_improve_poller } from "./improve_poller.js";
 
@@ -40,6 +41,9 @@ app.use("/catalogo", express.static("assets/catalogo"));
 import path from "path";
 app.get("/privacy", (_req, res) => res.sendFile(path.resolve("assets/legal/privacy.html")));
 app.get("/data-deletion", (_req, res) => res.sendFile(path.resolve("assets/legal/data-deletion.html")));
+
+// Visor privado de conversaciones (protegido por ADMIN_KEY).
+mount_admin(app);
 
 // ─── Health & landing ────────────────────────────────────────────
 app.get("/", (_req, res) => {
@@ -126,11 +130,6 @@ app.get("/instagram/webhook", (req, res) => {
 });
 app.post("/instagram/webhook", (req, res) => {
   res.sendStatus(200); // responder rápido para que Meta no reintente
-  // Diagnóstico: registrar TODO lo que llega al webhook de IG (crudo) para saber
-  // si Meta está entregando los DMs y con qué estructura.
-  try {
-    logger.info({ raw: JSON.stringify(req.body).slice(0, 2500) }, "📩 IG webhook POST recibido");
-  } catch { logger.info("📩 IG webhook POST recibido (body no serializable)"); }
   handle_ig_event(req.body).catch(err => logger.error({ err: err.message }, "Error en webhook de Instagram"));
 });
 
