@@ -924,7 +924,7 @@ async function handle_text(parsed, contact) {
           const img_sid = await send_image(from, url, "");
           logger.info({ desc: tool.input.descripcion, img_sid }, "📤 imagen generada enviada");
         } else {
-          await send_text(from, "Mi amor, déjame confirmar ese producto con Winny y te lo muestro enseguida 💕");
+          await send_text(from, "Mira todas las fotos y precios aquí amor 👉 winnybeautysupply.com 💕");
         }
       } else {
         // Respuesta inmediata + fotos en PARALELO (no una por una) para que llegue rápido
