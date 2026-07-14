@@ -244,20 +244,25 @@ function describe_product(p) {
 
 // ═══ Enviar un producto del catálogo (foto/video Cloudinary + precio) ═══
 async function send_product(to, p) {
+  const raw = (p.media_url && p.media_url.startsWith("http")) ? p.media_url : null;
+  // Un LINK de página (Instagram/TikTok/Facebook/YouTube) NO es un archivo que Twilio
+  // pueda enviar como media → se manda como LINK de texto para que la clienta lo abra.
+  const isPageLink = raw && /(instagram\.com|tiktok\.com|facebook\.com|fb\.watch|youtu\.?be)/i.test(raw);
   const lines = [`🛍️ *${p.nombre}*`, `💵 RD$${rd(p.precio_detalle)}`];
   if (p.precio_mayor) lines.push(`📦 Por ${p.cant_mayor || "mayor"}: RD$${rd(p.precio_mayor)} c/u`);
   if (p.precio_caja) lines.push(`📦 Por caja${p.unidades_caja ? ` (${p.unidades_caja} und)` : ""}: RD$${rd(p.precio_caja)} c/u`);
   if (p.colores) lines.push(`🎨 Colores: ${p.colores}`);
   if (p.oferta) lines.push(`🔥 ¡EN OFERTA!`);
+  if (isPageLink) lines.push(`🎥 Míralo aquí: ${raw}`);
   const caption = lines.join("\n");
-  // EL PRECIO SIEMPRE VA POR TEXTO (garantizado). La foto es un extra best-effort:
-  // así, aunque Twilio no entregue la imagen, la clienta SIEMPRE recibe nombre + precio.
+  // EL PRECIO SIEMPRE VA POR TEXTO (garantizado). La foto/video es un extra best-effort:
+  // así, aunque Twilio no entregue el archivo, la clienta SIEMPRE recibe nombre + precio.
   const txt_sid = await send_text(to, caption);
   logger.info({ to, prod: p.nombre, precio: p.precio_detalle, txt_sid }, "📤 producto (texto)");
-  // Foto REAL si existe; si no, imagen generada con IA (con caché).
-  let media = (p.media_url && p.media_url.startsWith("http")) ? fast_media_url(p.media_url) : null;
+  // Archivo REAL (foto/video directo). Si es un link de página, ya va en el texto de arriba.
+  let media = (raw && !isPageLink) ? fast_media_url(raw) : null;
   let generada = false;
-  if (!media) { media = await get_or_generate_image(describe_product(p)); generada = !!media; }
+  if (!media && !isPageLink) { media = await get_or_generate_image(describe_product(p)); generada = !!media; }
   if (media) {
     const img_sid = await send_image(to, media, "");
     logger.info({ to, prod: p.nombre, img_sid, generada }, "📤 producto (foto)");
