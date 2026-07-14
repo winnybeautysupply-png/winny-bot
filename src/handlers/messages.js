@@ -38,6 +38,9 @@ let last_customer_from = null;
 // Recuerda el último RECIBO DE ENVÍO que Winny mandó sin número, para reenviarlo cuando ella dé el número
 let last_owner_receipt = null;
 
+// Recuerda el último VIDEO que Winny mandó sin número, para reenviarlo cuando ella dé el número
+let last_owner_video = null;
+
 // MODO ADMIN: envío pendiente de confirmación ("enviar a X: Y" → espera "sí")
 let pending_admin_send = null;
 
@@ -106,6 +109,54 @@ async function forward_shipping_receipt(to, image_url, envio = {}) {
   logger.info({ to, empresa, guia, sid }, "📦 recibo de envío reenviado + pedido marcado como enviado");
 }
 
+// Winny reenvía una FOTO o VIDEO cualquiera a una clienta (un producto, una
+// referencia, un reel) que NO es un recibo de envío: se manda tal cual con un
+// saludo cálido, SIN tocar el estado del pedido (no marca "enviado").
+async function forward_media_to_client(to, media_url, caption = "") {
+  const clean = (caption || "")
+    .replace(/(?:\+?1[\s\-.]?)?\(?8[024]9\)?[\s\-.]?\d{3}[\s\-.]?\d{4}/g, "") // quitar el número que puso Winny
+    .trim();
+  const msg = clean || "¡Hola mi amor! 💕 Mira 👇✨";
+  const sid = await send_image(to, media_url, msg); // MediaUrl de Twilio sirve para foto Y video
+  if (!sid) await send_text(to, msg);
+  save_message({ phone: to, direction: "out", type: "image", content: `[foto/video reenviado por Winny]${clean ? ": " + clean : ""}`, media_path: null, wa_message_id: sid });
+  return sid;
+}
+
+// Winny (dueña) manda un VIDEO — casi siempre para reenviárselo a una clienta
+// (un reel de producto, un video de un estilo). Lo descargamos, lo servimos
+// públicamente y, si puso el número de la clienta, se lo mandamos. No toca pedidos.
+async function handle_owner_video(parsed) {
+  const owner = config.business.owner_phone;
+  const ext = (parsed.mime?.split("/")[1] || "mp4").split(";")[0];
+  const filename = `jefa-video-${Date.now()}.${ext}`;
+  const save_to = path.join(config.receipts_dir, filename);
+  const dl = await download_media(parsed.media_url, save_to);
+  if (!dl) { await send_text(owner, "No me llegó bien el video jefa 😅 ¿me lo reenvías?"); return; }
+  const public_url = `${config.public_base_url}/comprobantes/${filename}`;
+
+  const target = extract_phone(parsed.caption);
+  if (target) {
+    last_owner_video = null;
+    await forward_media_to_client(target, public_url, parsed.caption || "");
+    await send_text(owner, `✅ Listo jefa, le reenvié el video a la clienta +${target} 🎥💕`);
+    return;
+  }
+  // Sin número → guardarlo y pedir a cuál clienta mandarlo.
+  last_owner_video = { url: public_url };
+  await send_text(owner, "🎥 Recibí el video jefa. ¿A cuál clienta se lo mando? Pásame el número (ej: 8091234567) 💕");
+}
+
+// Una CLIENTA manda un video (ej. una grabación de un estilo que le gustó).
+// No podemos "ver" el video, así que respondemos cálido y le pedimos detalles.
+async function handle_customer_video(parsed, contact) {
+  const { from } = parsed;
+  if (is_handed_off(from)) { logger.info({ from }, "Cliente en handoff — bot no responde (video)"); return; }
+  const msg = "¡Gracias por el video mi amor! 💕 Cuéntame qué te gustó (color, textura, largo) y te muestro las pelucas más parecidas de nuestro catálogo ✨ También puedes verlas en winnybeautysupply.com 🛍️";
+  const sid = await send_text(from, msg);
+  save_message({ phone: from, direction: "out", type: "text", content: msg, wa_message_id: sid });
+}
+
 // Winny (dueña) manda una o VARIAS fotos → ya clasificadas como álbum.
 // Reenvía recibos de envío a la clienta; para cualquier otra imagen (incluidas
 // fotos personales) responde de forma NATURAL vía Claude (nunca asume qué es).
@@ -122,10 +173,18 @@ async function route_owner_batch(from, downloaded, cls, contact) {
   for (const d of downloaded) { const t = extract_phone(d.caption); if (t) { target = t; break; } }
 
   if (target) {
-    // Winny puso un número → reenviar la imagen a esa clienta (recibo u otra cosa que quiera mandar).
+    // Winny puso un número → reenviar la imagen a esa clienta.
     last_owner_receipt = null;
-    await forward_shipping_receipt(target, public_url, envio);
-    await send_text(owner, `✅ Listo jefa, se lo reenvié a la clienta +${target} 📦${envio.empresa ? " (" + envio.empresa + ")" : ""}${envio.guia ? " guía " + envio.guia : ""} 💕`);
+    if (isReceipt) {
+      // ES un recibo de envío → reenviar como envío (esto SÍ marca el pedido como enviado).
+      await forward_shipping_receipt(target, public_url, envio);
+      await send_text(owner, `✅ Listo jefa, le reenvié el RECIBO DE ENVÍO a la clienta +${target} 📦${envio.empresa ? " (" + envio.empresa + ")" : ""}${envio.guia ? " guía " + envio.guia : ""} 💕`);
+    } else {
+      // NO es recibo (foto de producto, referencia, etc.) → reenviar la foto tal cual, SIN marcar el pedido como enviado.
+      const capt = downloaded.map(d => d.caption).filter(Boolean).join(" ");
+      await forward_media_to_client(target, public_url, capt);
+      await send_text(owner, `✅ Listo jefa, le reenvié la foto a la clienta +${target} 📸💕`);
+    }
     return;
   }
 
@@ -633,6 +692,17 @@ async function handle_owner_command(parsed) {
     }
   }
 
+  // ¿Hay un VIDEO pendiente y Winny manda el número de la clienta? → reenviarlo.
+  if (last_owner_video) {
+    const t = extract_phone(parsed.text);
+    if (t) {
+      await forward_media_to_client(t, last_owner_video.url, "");
+      await send_text(config.business.owner_phone, `✅ Listo jefa, le reenvié el video a la clienta +${t} 🎥💕`);
+      last_owner_video = null;
+      return true;
+    }
+  }
+
   // ¿Hay un recibo de envío pendiente y Winny manda el número de la clienta? → reenviarlo.
   if (last_owner_receipt) {
     const t = extract_phone(parsed.text);
@@ -1016,6 +1086,12 @@ export async function handle_incoming(parsed, contact_profile) {
     catch (err) { logger.error({ err: err.message, from }, "Error encolando imagen de Winny"); }
     return;
   }
+  // Winny manda un VIDEO → normalmente para reenviárselo a una clienta.
+  if (is_owner(from) && type === "video") {
+    try { await handle_owner_video(parsed); }
+    catch (err) { logger.error({ err: err.message, from }, "Error con video de Winny"); }
+    return;
+  }
 
   // Despachar según tipo
   switch (type) {
@@ -1026,6 +1102,9 @@ export async function handle_incoming(parsed, contact_profile) {
       break;
     case "image":
       buffer_image(parsed, contact); // agrupa álbumes → una sola respuesta
+      break;
+    case "video":
+      await handle_customer_video(parsed, contact);
       break;
     case "audio":
       await handle_audio(parsed, contact);
