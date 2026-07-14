@@ -127,6 +127,21 @@ export function get_conversations_to_review(windowMs = 24 * 60 * 60 * 1000, limi
   `).all(since, limit);
 }
 
+// OFERTA FLASH: clientas cuyo ÚLTIMO mensaje ENTRANTE cae dentro de la ventana
+// (por defecto 24h). Dentro de esa ventana WhatsApp permite escribirles libremente
+// (sin plantilla). Devuelve [{phone, last_in, name}] ordenado por más reciente.
+export function get_recent_inbound_contacts(windowMs = 24 * 60 * 60 * 1000) {
+  const since = Date.now() - windowMs;
+  return db.prepare(`
+    SELECT m.phone AS phone, MAX(m.timestamp) AS last_in,
+           (SELECT c.name FROM contacts c WHERE c.phone = m.phone) AS name
+    FROM messages m
+    WHERE m.direction = 'in' AND m.timestamp > ?
+    GROUP BY m.phone
+    ORDER BY last_in DESC
+  `).all(since);
+}
+
 export function mark_reviewed(phone) {
   db.prepare(`
     INSERT INTO reviews (phone, last_reviewed) VALUES (?, ?)

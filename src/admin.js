@@ -5,7 +5,10 @@
 //   /admin?key=CLAVE              → lista de clientas
 //   /admin?key=CLAVE&phone=XXXX   → conversación con esa clienta
 // ═══════════════════════════════════════════════════════════════
-import db from "./db.js";
+import db, { get_recent_inbound_contacts, save_message } from "./db.js";
+import { send_text, send_image } from "./whatsapp.js";
+import { config } from "./config.js";
+import { logger } from "./logger.js";
 
 const ADMIN_KEY = process.env.ADMIN_KEY || "";
 
@@ -122,5 +125,74 @@ export function mount_admin(app) {
     }
     if (req.query.phone) return res.send(conversation(String(req.query.phone)));
     return res.send(contactsList());
+  });
+
+  mount_flash(app);
+}
+
+// ── Destinatarias elegibles para la oferta flash ──
+// Clientas con mensaje entrante dentro de la ventana, EXCLUYENDO a la dueña y a
+// los contactos de Instagram (ig:) que no se pueden contactar por Twilio/WhatsApp.
+function flash_recipients(windowMs) {
+  const owner = (config.business.owner_phone || "").replace(/\D/g, "");
+  return get_recent_inbound_contacts(windowMs)
+    .filter(r => r.phone && !r.phone.startsWith("ig:"))
+    .filter(r => r.phone.replace(/\D/g, "") !== owner);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// OFERTA FLASH — enviar un mensaje a las clientas dentro de la ventana de 24h.
+//   GET  /flash?key=KEY[&hours=24]                 → PREVISUALIZA (cuántas + quiénes), NO envía
+//   POST /flash  (key, msg, [img], [hours], send=1) → ENVÍA a todas las elegibles
+// Protegido por ADMIN_KEY. El envío exige send=1 + msg para evitar disparos accidentales.
+// ═══════════════════════════════════════════════════════════════
+function mount_flash(app) {
+  app.all("/flash", async (req, res) => {
+    if (!ADMIN_KEY) return res.status(503).json({ error: "falta ADMIN_KEY" });
+    const src = { ...(req.query || {}), ...(req.body || {}) };
+    if (src.key !== ADMIN_KEY) return res.status(401).json({ error: "clave incorrecta" });
+
+    const hours = Math.max(1, Math.min(24, parseInt(src.hours || "24", 10) || 24));
+    const windowMs = hours * 60 * 60 * 1000;
+    const recips = flash_recipients(windowMs);
+    const msg = (src.msg || "").toString();
+    const img = (src.img || "").toString();
+    const doSend = String(src.send || "") === "1";
+
+    // PREVISUALIZAR (por defecto): devuelve la lista sin enviar nada.
+    if (!doSend) {
+      return res.json({
+        modo: "previsualizacion",
+        ventana_horas: hours,
+        elegibles: recips.length,
+        destinatarias: recips.map(r => ({
+          phone: r.phone, nombre: r.name || null, ultimo_mensaje: fmtTime(r.last_in)
+        }))
+      });
+    }
+
+    // ENVIAR: requiere mensaje.
+    if (!msg.trim()) return res.status(400).json({ error: "falta el texto (msg)" });
+
+    logger.info({ elegibles: recips.length, con_imagen: !!img, hours }, "📣 Oferta flash — iniciando envío");
+    let enviados = 0, fallidos = 0;
+    const detalle = [];
+    for (const r of recips) {
+      try {
+        const sid = (img && img.startsWith("http"))
+          ? await send_image(r.phone, img, msg)
+          : await send_text(r.phone, msg);
+        if (sid) {
+          enviados++;
+          save_message({ phone: r.phone, direction: "out", type: img ? "image" : "text", content: msg, wa_message_id: sid });
+        } else { fallidos++; }
+        detalle.push({ phone: r.phone, ok: !!sid });
+      } catch (e) {
+        fallidos++;
+        detalle.push({ phone: r.phone, ok: false, error: e.message });
+      }
+    }
+    logger.info({ enviados, fallidos, total: recips.length }, "📣 Oferta flash — envío terminado");
+    return res.json({ modo: "envio", ventana_horas: hours, total: recips.length, enviados, fallidos, detalle });
   });
 }
