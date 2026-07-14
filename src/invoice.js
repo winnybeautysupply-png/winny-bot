@@ -90,13 +90,20 @@ export function generate_invoice(order) {
       y += 50;
 
       // ─── Datos de la clienta ───
-      doc.roundedRect(left, y, width, 70, 6).fillColor(LIGHT).fill();
+      const hasLoc = !!order.ubicacion;
+      const boxH = hasLoc ? 100 : 86;
+      doc.roundedRect(left, y, width, boxH, 6).fillColor(LIGHT).fill();
       doc.fillColor(PINK).font("Helvetica-Bold").fontSize(10).text("CLIENTA", left + 12, y + 10);
       doc.fillColor(DARK).font("Helvetica").fontSize(10)
         .text(`Nombre: ${order.customer_name || "—"}`, left + 12, y + 25, { width: width - 24 })
-        .text(`Teléfono: +${order.phone}`, left + 12, y + 39, { width: width - 24 })
-        .text(`Dirección de envío: ${order.delivery_address || "—"}`, left + 12, y + 53, { width: width - 24 });
-      y += 86;
+        .text(`Celular: +${order.phone}`, left + 12, y + 39, { width: width - 24 })
+        .text(`Provincia: ${order.provincia || "—"}`, left + 12, y + 53, { width: width - 24 })
+        .text(`Dirección: ${order.delivery_address || "—"}`, left + 12, y + 67, { width: width - 24 });
+      if (hasLoc) {
+        doc.fillColor("#1057C9").font("Helvetica").fontSize(9)
+          .text(`Ubicación (Santo Domingo): ${order.ubicacion}`, left + 12, y + 82, { width: width - 24 });
+      }
+      y += boxH + 16;
 
       // ─── Tabla de productos ───
       const cols = { prod: left + 8, cant: left + 300, precio: left + 360, imp: left + 450 };

@@ -88,7 +88,7 @@ db.exec(`
 `);
 
 // Migraciones: columnas de envío en orders (si aún no existen)
-for (const col of ["guia_envio TEXT", "empresa_envio TEXT"]) {
+for (const col of ["guia_envio TEXT", "empresa_envio TEXT", "provincia TEXT", "ubicacion TEXT"]) {
   try { db.exec(`ALTER TABLE orders ADD COLUMN ${col}`); } catch { /* la columna ya existe */ }
 }
 
@@ -205,7 +205,7 @@ export function create_order(phone) {
 
 export function update_order(id, fields) {
   const allowed = ["status", "items", "customer_name", "delivery_address",
-                   "payment_method", "receipt_path", "total", "notes"];
+                   "payment_method", "receipt_path", "total", "notes", "provincia", "ubicacion"];
   const updates = [];
   const values = [];
   for (const k of allowed) {

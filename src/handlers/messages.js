@@ -868,6 +868,7 @@ async function handle_text(parsed, contact) {
         status: "awaiting_payment",
         items: tool.input.productos || [],
         customer_name: tool.input.nombre_cliente,
+        provincia: tool.input.provincia,
         delivery_address: tool.input.direccion,
         payment_method: tool.input.metodo_pago,
         total: subtotal || null,
@@ -881,6 +882,7 @@ async function handle_text(parsed, contact) {
         `🛍️ *Nuevo pedido* (#${order.id})\n\n` +
         `📱 +${from}\n` +
         `👤 ${tool.input.nombre_cliente}\n` +
+        (tool.input.provincia ? `🗺️ Provincia: ${tool.input.provincia}\n` : "") +
         `📍 ${tool.input.direccion}\n` +
         `💳 ${tool.input.metodo_pago}\n\n` +
         `*Productos:*\n${items_text}\n` +
@@ -1027,6 +1029,7 @@ export async function handle_incoming(parsed, contact_profile) {
       await send_text(from, "¡Gracias por tu ubicación mi amor! 📍 Winny te confirma el costo del envío según tu zona en breve 💕");
       last_location_from = from; // recordar para cotizar con "envio <precio>"
       const maps = `https://maps.google.com/?q=${parsed.latitude},${parsed.longitude}`;
+      try { const ordLoc = get_active_order(from); if (ordLoc) update_order(ordLoc.id, { ubicacion: maps }); } catch (e) { /* no crítico */ }
       await send_text(config.business.owner_phone,
         `📍 *Ubicación para envío (Santo Domingo)*\n` +
         `📱 Cliente: +${from}${contact.name ? ` (${contact.name})` : ""}\n` +

@@ -45,11 +45,12 @@ const TOOLS = [
           }
         },
         nombre_cliente: { type: "string" },
+        provincia: { type: "string", description: "provincia o sector de la clienta (ej: Santiago, La Vega, Puerto Plata, Santo Domingo Este, etc.)" },
         direccion: { type: "string" },
         metodo_pago: { type: "string", enum: ["efectivo", "tarjeta", "transferencia", "contra_entrega"] },
         notas: { type: "string", description: "Comentarios adicionales del cliente" }
       },
-      required: ["productos", "nombre_cliente", "direccion", "metodo_pago"]
+      required: ["productos", "nombre_cliente", "provincia", "direccion", "metodo_pago"]
     }
   },
   {
