@@ -5,7 +5,7 @@
 //   /admin?key=CLAVE              → lista de clientas
 //   /admin?key=CLAVE&phone=XXXX   → conversación con esa clienta
 // ═══════════════════════════════════════════════════════════════
-import db, { get_recent_inbound_contacts, save_message } from "./db.js";
+import db, { get_recent_inbound_contacts, save_message, get_open_orders } from "./db.js";
 import { send_text, send_image } from "./whatsapp.js";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
@@ -128,6 +128,46 @@ export function mount_admin(app) {
   });
 
   mount_flash(app);
+  mount_pending(app);
+}
+
+// ═══ AUDITORÍA de pedidos abiertos — GET /pending?key=ADMIN_KEY ═══
+// Lista clientas colgadas (pagaron y no se cerró, o pendientes), con días de antigüedad.
+function mount_pending(app) {
+  app.get("/pending", (req, res) => {
+    if (!ADMIN_KEY) return res.status(503).json({ error: "falta ADMIN_KEY" });
+    if (req.query.key !== ADMIN_KEY) return res.status(401).json({ error: "clave incorrecta" });
+    const now = Date.now();
+    const estados = {
+      awaiting_verification: "PAGÓ — falta confirmar ⚠️",
+      paid: "Pagado — falta enviar 📦",
+      awaiting_payment: "Esperando pago del cliente",
+      draft: "Carrito sin terminar"
+    };
+    let rows;
+    try { rows = get_open_orders(); } catch (e) { return res.status(500).json({ error: e.message }); }
+    const orders = rows.map(o => {
+      let items = o.items;
+      if (typeof items === "string") { try { items = JSON.parse(items); } catch { items = []; } }
+      const prods = Array.isArray(items)
+        ? items.map(p => `${p.cantidad || 1}× ${p.nombre}${p.detalles ? " (" + p.detalles + ")" : ""}`).join(", ")
+        : "";
+      const dias = Math.floor((now - (o.created_at || now)) / 86400000);
+      return {
+        id: o.id, telefono: o.phone, nombre: o.customer_name || o.contact_name || "",
+        estado: estados[o.status] || o.status, dias_esperando: dias,
+        productos: prods, total: o.total || null,
+        tiene_comprobante: !!o.receipt_path,
+        fecha: new Date(o.created_at || now).toLocaleString("es-DO", { timeZone: "America/Santo_Domingo" })
+      };
+    });
+    res.json({
+      total_abiertos: orders.length,
+      pagaron_falta_confirmar: orders.filter(o => /confirmar/.test(o.estado)).length,
+      pagado_falta_enviar: orders.filter(o => /enviar/.test(o.estado)).length,
+      pedidos: orders
+    });
+  });
 }
 
 // ── Destinatarias elegibles para la oferta flash ──

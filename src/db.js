@@ -290,6 +290,21 @@ export function set_shipping(phone, { guia = null, empresa = null } = {}) {
   return order.id;
 }
 
+// AUDITORÍA: todos los pedidos ABIERTOS (no entregados/cancelados) para detectar
+// clientas colgadas — sobre todo las que pagaron (awaiting_verification) hace días.
+export function get_open_orders() {
+  return db.prepare(`
+    SELECT o.id, o.phone, o.status, o.items, o.total, o.customer_name, o.delivery_address,
+           o.created_at, o.updated_at, o.receipt_path, o.guia_envio, o.empresa_envio,
+           c.name AS contact_name
+    FROM orders o LEFT JOIN contacts c ON c.phone = o.phone
+    WHERE o.status IN ('awaiting_verification','awaiting_payment','paid','draft')
+    ORDER BY
+      CASE o.status WHEN 'awaiting_verification' THEN 0 WHEN 'paid' THEN 1 WHEN 'awaiting_payment' THEN 2 ELSE 3 END,
+      o.created_at ASC
+  `).all();
+}
+
 // Pedido de un cliente esperando que Winny verifique el pago
 export function get_pending_verification(phone) {
   return db.prepare(`
