@@ -18,6 +18,7 @@ import { verify_webhook as ig_verify, handle_ig_event, ig_enabled } from "./inst
 import { mount_admin } from "./admin.js";
 import { start_shipping_poller } from "./shipping_poller.js";
 import { start_improve_poller } from "./improve_poller.js";
+import { start_pending_poller } from "./pending_poller.js";
 
 const app = express();
 // Twilio manda los webhooks como application/x-www-form-urlencoded
@@ -161,6 +162,7 @@ const server = http.createServer(app);
 setup_voice_ws(server); // adjunta el WS de ConversationRelay en /voice/ws
 start_shipping_poller(); // revisa estados de envío en la hoja cada 5 min
 start_improve_poller();  // auto-mejora: revisa conversaciones periódicamente
+start_pending_poller();  // recuerda a Winny los pagos por confirmar / pedidos por enviar
 
 server.listen(config.port, () => {
   logger.info({

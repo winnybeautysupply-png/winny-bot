@@ -334,8 +334,43 @@ async function send_product(to, p) {
 async function process_payment_receipt(parsed, contact, save_to, filename, cls = null) {
   const { from } = parsed;
   const d = cls?.datos_pago || {};
-  const order = get_active_order(from);
-  if (order) update_order(order.id, { receipt_path: save_to, status: "awaiting_verification" });
+  let order = get_active_order(from);
+  if (order) {
+    update_order(order.id, { receipt_path: save_to, status: "awaiting_verification" });
+  } else {
+    // ⚠️ NO había pedido registrado → lo CREAMOS ahora para que el pago NUNCA se pierda
+    // (antes, si el bot no había registrado el pedido, la clienta pagaba y quedaba colgada).
+    // Reconstruimos qué pidió leyendo su conversación y lo dejamos en 'awaiting_verification'.
+    try {
+      const oid = create_order(from);
+      const hist = get_recent_messages(from, 30).map(r => ({ role: r.direction === "in" ? "user" : "assistant", content: r.content || "" }));
+      const ext = await extract_order_from_chat(hist);
+      const subt = ext ? items_subtotal(ext.productos) : 0;
+      update_order(oid, {
+        status: "awaiting_verification",
+        receipt_path: save_to,
+        items: ext?.productos || [],
+        customer_name: ext?.nombre_cliente || contact?.name || "",
+        delivery_address: ext?.direccion || "",
+        total: (subt + (Number(ext?.envio_rd) || 0)) || null
+      });
+      order = { id: oid };
+      // Registrar también en la hoja de Google (para que quede historial visible)
+      const fecha = new Date().toLocaleString("es-DO", { timeZone: config.business.timezone });
+      const prods = ext?.productos || [];
+      append_order_row([
+        fecha, ext?.nombre_cliente || contact?.name || "", `+${from}`,
+        prods.map(p => p.nombre).filter(Boolean).join(", "),
+        prods.reduce((s, p) => s + (Number(p.cantidad) || 1), 0),
+        prods.map(p => p.detalles).filter(Boolean).join(" / "),
+        subt ? `RD$${rd(subt)}` : "", "Comprobante recibido — por confirmar",
+        ext?.direccion || "", "Pendiente", "", fecha, ""
+      ]).catch(err => logger.error({ err: err.message }, "Sheets append (comprobante) falló"));
+      logger.info({ from, order_id: oid }, "🧾 pedido creado automáticamente desde el comprobante");
+    } catch (e) {
+      logger.error({ err: e.message, from }, "no pude crear pedido desde comprobante");
+    }
+  }
   last_comprobante_from = from;
 
   // Confirmación al cliente CON EL MONTO leído del comprobante (si se detectó)
