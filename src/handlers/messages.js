@@ -1096,19 +1096,6 @@ export async function handle_incoming(parsed, contact_profile) {
     media_path: null, wa_message_id: id
   });
 
-  // ⛔ BOT EN PAUSA (2026-07-15, por decisión de Winny): NO atiende como bot.
-  //    A cada clienta le da el WhatsApp PERSONAL de Winny y no hace nada más.
-  //    Para reactivar el bot: poner BOT_PAUSED = false y desplegar.
-  const BOT_PAUSED = true;
-  if (BOT_PAUSED && !is_owner(from)) {
-    try {
-      const m = "¡Hola amor! 💕 Escríbeme directo a mi WhatsApp: 849-621-9899";
-      const sid = await send_text(from, m);
-      save_message({ phone: from, direction: "out", type: "text", content: m, wa_message_id: sid });
-    } catch (e) { logger.error({ err: e.message, from }, "error en modo pausa"); }
-    return;
-  }
-
   // Marcar como leído + indicador de typing
   try {
     await mark_read(id);
