@@ -92,6 +92,12 @@ for (const col of ["guia_envio TEXT", "empresa_envio TEXT", "provincia TEXT", "u
   try { db.exec(`ALTER TABLE orders ADD COLUMN ${col}`); } catch { /* la columna ya existe */ }
 }
 
+// Migración: MEMORIA DE LARGO PLAZO por clienta (ficha que el bot relee en cada mensaje,
+// aunque la conversación tenga meses; se actualiza sola cada cierta cantidad de mensajes).
+for (const col of ["summary TEXT", "summary_at_msg INTEGER DEFAULT 0"]) {
+  try { db.exec(`ALTER TABLE contacts ADD COLUMN ${col}`); } catch { /* la columna ya existe */ }
+}
+
 // Registro de comprobantes de pago recibidos — para DETECTAR FRAUDE (referencias repetidas).
 db.exec(`
   CREATE TABLE IF NOT EXISTS payments (
@@ -173,6 +179,30 @@ export function save_message({ phone, direction, type, content, media_path, wa_m
     INSERT INTO messages (phone, direction, type, content, media_path, wa_message_id, timestamp)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(phone, direction, type, content || null, media_path || null, wa_message_id || null, Date.now());
+}
+
+// ─── Memoria de largo plazo por clienta ─────────────────────────
+
+// Ficha guardada de la clienta (o null). Se inyecta al prompt en CADA mensaje.
+export function get_contact_summary(phone) {
+  const row = db.prepare("SELECT summary FROM contacts WHERE phone = ?").get(phone);
+  return row?.summary || null;
+}
+
+// Guarda la ficha y anota en qué número de mensaje se hizo (para saber cuándo refrescarla).
+export function set_contact_summary(phone, summary) {
+  db.prepare("UPDATE contacts SET summary = ?, summary_at_msg = ? WHERE phone = ?")
+    .run(summary, count_messages(phone), phone);
+}
+
+export function count_messages(phone) {
+  return db.prepare("SELECT COUNT(*) AS n FROM messages WHERE phone = ? AND type = 'text'").get(phone)?.n || 0;
+}
+
+// ¿Toca refrescar la ficha? (cada `every` mensajes de texto nuevos desde la última vez)
+export function summary_is_stale(phone, every = 12) {
+  const row = db.prepare("SELECT summary_at_msg FROM contacts WHERE phone = ?").get(phone);
+  return count_messages(phone) - (row?.summary_at_msg || 0) >= every;
 }
 
 export function get_recent_messages(phone, limit = 10) {

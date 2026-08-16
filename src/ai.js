@@ -420,6 +420,12 @@ export async function generate_response(user_message, history = [], ctx = {}) {
     ? `\n\n[NOTA INTERNA: Esta clienta YA te ha comprado antes. Su historial de compras:\n${ctx.purchase_history}\nReconócela con cariño como clienta que vuelve (ej: "¡Qué bueno tenerte de vuelta reina! 💕"). Puedes referirte a lo que compró antes si viene al caso (ej: preguntarle cómo le fue con su pelo, u ofrecerle algo que combine). Úsalo con naturalidad, NO se lo recites como una lista de robot.]`
     : "";
 
+  // Inyectar la FICHA DE MEMORIA de la clienta (resumen de TODA su relación con la tienda,
+  // no solo los últimos mensajes) — para que el bot nunca "olvide" acuerdos, gustos o pendientes.
+  const memory_text = ctx.client_summary
+    ? `\n\n[NOTA INTERNA — FICHA DE LA CLIENTA (memoria de conversaciones anteriores, incluso de hace semanas):\n${ctx.client_summary}\nUsa esta ficha como si lo recordaras tú: no le pidas datos que ya están aquí, retoma acuerdos pendientes con naturalidad y no la hagas repetir su historia.]`
+    : "";
+
   const messages = [
     ...history.map(m => ({ role: m.role, content: m.content })),
     { role: "user", content: user_message }
@@ -452,7 +458,7 @@ export async function generate_response(user_message, history = [], ctx = {}) {
       model: config.claude.model,
       max_tokens: 600,
       temperature: 0.7,
-      system: SYSTEM_PROMPT + catalog_text + faq_text + ctx_text + name_text + history_text,
+      system: SYSTEM_PROMPT + catalog_text + faq_text + ctx_text + name_text + history_text + memory_text,
       tools: TOOLS,
       messages
     });
@@ -486,5 +492,34 @@ export async function generate_response(user_message, history = [], ctx = {}) {
       usage: null,
       stop_reason: "error"
     };
+  }
+}
+
+/**
+ * MEMORIA DE LARGO PLAZO: destila la conversación reciente + la ficha anterior
+ * en una ficha corta y actualizada de la clienta. Se guarda en la DB y se
+ * inyecta en cada respuesta futura (así el bot nunca "olvida" aunque el chat crezca).
+ * @param {string} prev_summary - ficha anterior (o null)
+ * @param {string} convo_text - últimos mensajes en texto plano
+ * @param {string} orders_text - resumen de compras (opcional)
+ * @returns {string|null} ficha nueva, o null si falló
+ */
+export async function summarize_client(prev_summary, convo_text, orders_text = "") {
+  try {
+    const response = await claude.messages.create({
+      model: config.claude.model,
+      max_tokens: 350,
+      temperature: 0,
+      system: "Eres el archivador de una tienda de belleza dominicana. Tu único trabajo: mantener al día la FICHA de una clienta a partir de su ficha anterior y los mensajes nuevos. Escribe en español, máximo 10 líneas, en viñetas cortas. Incluye SOLO lo útil para atenderla en el futuro: nombre/apodo, qué productos le interesan o compró, tallas/colores/pulgadas preferidas, presupuesto, dirección o provincia si la dio, acuerdos pendientes (ej: 'quedó en pasar el viernes', 'esperando foto'), quejas o cosas a evitar. NO inventes nada; si un dato viejo fue corregido por uno nuevo, quédate con el nuevo. Devuelve SOLO la ficha, sin preámbulos.",
+      messages: [{
+        role: "user",
+        content: `FICHA ANTERIOR:\n${prev_summary || "(ninguna, clienta nueva)"}\n\nCOMPRAS REGISTRADAS:\n${orders_text || "(ninguna)"}\n\nMENSAJES RECIENTES:\n${convo_text}\n\nDevuelve la ficha actualizada.`
+      }]
+    });
+    const text = response.content?.find(b => b.type === "text")?.text?.trim();
+    return text || null;
+  } catch (e) {
+    logger.error({ err: e?.message }, "Error actualizando ficha de clienta");
+    return null;
   }
 }

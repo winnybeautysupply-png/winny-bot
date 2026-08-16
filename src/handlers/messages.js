@@ -15,9 +15,10 @@ import {
   get_active_order, create_order, update_order,
   get_pending_verification, get_latest_pending_verification,
   get_customer_orders, set_shipping,
-  find_duplicate_payment, record_payment
+  find_duplicate_payment, record_payment,
+  get_contact_summary, set_contact_summary, summary_is_stale
 } from "../db.js";
-import { generate_response, extract_order_from_chat, generate_owner_response, analyze_image } from "../ai.js";
+import { generate_response, extract_order_from_chat, generate_owner_response, analyze_image, summarize_client } from "../ai.js";
 import { append_order_row, find_latest_order_by_phone, append_log_row } from "../sheets.js";
 import { generate_invoice } from "../invoice.js";
 import { transcribe_audio, transcription_enabled } from "../transcribe.js";
@@ -935,18 +936,37 @@ async function handle_text(parsed, contact) {
     return;
   }
 
-  // Construir historial para Claude (16 mensajes = ~8 idas y vueltas, para no olvidar el inicio del chat)
-  const history_rows = get_recent_messages(from, 16);
+  // Construir historial para Claude (24 mensajes = ~12 idas y vueltas; lo más viejo vive en la ficha)
+  const history_rows = get_recent_messages(from, 24);
   const history = format_history(history_rows.slice(0, -1)); // excluir mensaje actual
 
   const ctx = {
     is_open: is_business_open(),
     contact_name: contact?.name,
-    purchase_history: summarize_orders(get_customer_orders(from, 6))
+    purchase_history: summarize_orders(get_customer_orders(from, 6)),
+    client_summary: get_contact_summary(from) // ficha de memoria de largo plazo
   };
 
   // Llamar a Claude
   const ai = await generate_response(text, history, ctx);
+
+  // MEMORIA: si ya se acumularon suficientes mensajes nuevos, refrescar la ficha
+  // de la clienta en segundo plano (no bloquea la respuesta).
+  if (summary_is_stale(from)) {
+    (async () => {
+      try {
+        const convo = format_history(get_recent_messages(from, 30))
+          .map(m => `${m.role === "user" ? "Clienta" : "Bot"}: ${m.content}`).join("\n");
+        const ficha = await summarize_client(ctx.client_summary, convo, ctx.purchase_history || "");
+        if (ficha) {
+          set_contact_summary(from, ficha);
+          logger.info({ from, ficha_preview: ficha.slice(0, 80) }, "🧠 Ficha de clienta actualizada");
+        }
+      } catch (e) {
+        logger.error({ err: e?.message }, "Error refrescando ficha de clienta");
+      }
+    })();
+  }
   logger.info({
     from,
     msg: (text || "").slice(0, 80),
