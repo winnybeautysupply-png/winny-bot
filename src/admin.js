@@ -5,7 +5,7 @@
 //   /admin?key=CLAVE              → lista de clientas
 //   /admin?key=CLAVE&phone=XXXX   → conversación con esa clienta
 // ═══════════════════════════════════════════════════════════════
-import db, { get_recent_inbound_contacts, save_message, get_open_orders } from "./db.js";
+import db, { get_recent_inbound_contacts, save_message, get_open_orders, set_handoff, clear_handoff, is_handed_off } from "./db.js";
 import { send_text, send_image } from "./whatsapp.js";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
@@ -59,6 +59,13 @@ a{color:var(--pink);text-decoration:none}
 form.login{max-width:340px;margin:60px auto;background:#fff;padding:26px;border-radius:14px;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,.08)}
 input,button{font-size:1rem;padding:11px;border-radius:9px;border:1px solid #ccc;width:100%;margin-top:10px}
 button{background:var(--pink);color:#fff;border:0;font-weight:700;cursor:pointer}
+form.reply{position:sticky;bottom:0;background:#f0f2f5;padding:10px 0 6px;clear:both}
+form.reply textarea{width:100%;font-size:1rem;padding:10px;border-radius:10px;border:1px solid #ccc;resize:vertical;font-family:inherit}
+form.reply .row{display:flex;gap:10px;align-items:center;margin-top:8px}
+form.reply .row label{flex:1;font-size:.82rem;color:#556}
+form.reply .row button{width:auto;padding:10px 22px;margin-top:0}
+.notice{background:#e8f5e9;border:1px solid #c8e6c9;color:#256029;padding:9px 12px;border-radius:9px;margin:8px 0}
+.notice.err{background:#fdecea;border-color:#f5c6cb;color:#8a1c24}
 </style></head><body><header>🌸 Winny Bot — Conversaciones</header><div class="wrap">${inner}</div></body></html>`;
 }
 
@@ -94,7 +101,7 @@ function contactsList() {
     `<p class="sub">${rows.length} clientas — toca una para ver el chat completo</p>${items || "<p>Todavía no hay conversaciones.</p>"}`);
 }
 
-function conversation(phone) {
+function conversation(phone, notice) {
   const c = db.prepare("SELECT name FROM contacts WHERE phone = ?").get(phone);
   const msgs = db.prepare(`
     SELECT direction, type, content, timestamp
@@ -110,11 +117,28 @@ function conversation(phone) {
     return `<div class="msg ${who}">${esc(text)}<div class="meta">${fmtTime(m.timestamp)}</div></div>`;
   }).join("") + `<div class="clear"></div>`;
 
+  // Cajita para que WINNY responda directo desde el panel (llega por WhatsApp
+  // desde el número del bot). Solo para chats de WhatsApp (no Instagram).
+  const paused = is_handed_off(phone);
+  const replyBox = phone.startsWith("ig:") ? "" : `
+    <form class="reply" method="post" action="/admin/reply">
+      <input type="hidden" name="key" value="${esc(ADMIN_KEY)}">
+      <input type="hidden" name="phone" value="${esc(phone)}">
+      <textarea name="msg" rows="2" placeholder="Escribe tu mensaje como Winny…" required></textarea>
+      <div class="row">
+        <label><input type="checkbox" name="pausar" value="1" ${paused ? "checked" : ""}> pausar el bot 1h (la atiendes tú)</label>
+        <button type="submit">Enviar 💬</button>
+      </div>
+    </form>
+    <p class="sub" style="margin-top:6px">${paused ? "🔇 Bot en pausa con esta clienta." : "🤖 Bot activo con esta clienta."} Ojo: si su último mensaje tiene más de 24h, WhatsApp puede rechazar el envío.</p>`;
+
   return shell(disp,
     `<a class="back" href="/admin?key=${encodeURIComponent(ADMIN_KEY)}">← Todas las clientas</a>
      <div class="hd">${esc(disp)}</div>
      <div class="sub">${esc(phone.replace(/^whatsapp:/, ""))} · ${msgs.length} mensajes</div>
-     ${body || "<p>Sin mensajes.</p>"}`);
+     ${notice || ""}
+     ${body || "<p>Sin mensajes.</p>"}
+     ${replyBox}`);
 }
 
 export function mount_admin(app) {
@@ -123,8 +147,34 @@ export function mount_admin(app) {
     if (req.query.key !== ADMIN_KEY) {
       return res.status(req.query.key ? 401 : 200).send(loginForm(req.query.key ? "Clave incorrecta" : ""));
     }
-    if (req.query.phone) return res.send(conversation(String(req.query.phone)));
+    if (req.query.phone) {
+      const notice = req.query.sent === "1"
+        ? `<div class="notice">✅ Mensaje enviado a la clienta.</div>`
+        : (req.query.err ? `<div class="notice err">⚠️ ${esc(req.query.err)}</div>` : "");
+      return res.send(conversation(String(req.query.phone), notice));
+    }
     return res.send(contactsList());
+  });
+
+  // RESPONDER desde el panel: Winny escribe y le llega a la clienta por WhatsApp
+  // desde el número del bot. Opcional: pausar el bot 1h para atenderla a mano.
+  app.post("/admin/reply", async (req, res) => {
+    if (!ADMIN_KEY) return res.status(503).send("Falta ADMIN_KEY.");
+    const { key, phone, msg, pausar } = req.body || {};
+    if (key !== ADMIN_KEY) return res.status(401).send("Clave incorrecta.");
+    const back = `/admin?key=${encodeURIComponent(ADMIN_KEY)}&phone=${encodeURIComponent(phone || "")}`;
+    if (!phone || !(msg || "").trim()) return res.redirect(back + "&err=" + encodeURIComponent("Falta el mensaje."));
+    try {
+      const sid = await send_text(phone, msg.trim());
+      if (!sid) return res.redirect(back + "&err=" + encodeURIComponent("WhatsApp rechazó el envío (¿ventana de 24h vencida?)."));
+      save_message({ phone, direction: "out", type: "text", content: msg.trim(), wa_message_id: sid });
+      if (pausar === "1") set_handoff(phone, 60); else clear_handoff(phone);
+      logger.info({ phone, desde: "panel" }, "💬 Winny respondió desde el panel");
+      return res.redirect(back + "&sent=1");
+    } catch (e) {
+      logger.error({ err: e.message, phone }, "Error enviando desde el panel");
+      return res.redirect(back + "&err=" + encodeURIComponent("Error: " + e.message));
+    }
   });
 
   mount_flash(app);
