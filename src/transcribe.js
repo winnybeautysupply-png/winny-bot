@@ -10,6 +10,7 @@
 // Si algo falta, la transcripción devuelve null y el bot pide el texto.
 // ═══════════════════════════════════════════════════════════════
 import fs from "fs";
+import { execFile } from "child_process";
 import { google } from "googleapis";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
@@ -44,8 +45,29 @@ function pick_encoding(mime) {
   return null; // dejar que Google intente detectar
 }
 
+// PLAN B: convierte el audio a WAV 16k mono con ffmpeg (formato que Google
+// siempre acepta). Cubre opus raros, audios de otras apps, etc. null si falla.
+function to_wav16k(src_path) {
+  const out = src_path + ".16k.wav";
+  return new Promise(resolve => {
+    execFile("ffmpeg", ["-y", "-i", src_path, "-ar", "16000", "-ac", "1", "-f", "wav", out],
+      { timeout: 20000 }, (err) => resolve(!err && fs.existsSync(out) ? out : null));
+  });
+}
+
 // Transcribe un archivo de audio a texto (español dominicano). null si falla.
+// Intenta 1º con el formato original; si Google devuelve vacío, reintenta
+// convirtiendo a WAV 16k con ffmpeg (mucho más tolerante).
 export async function transcribe_audio(file_path, mime = "audio/ogg") {
+  const first = await transcribe_once(file_path, mime);
+  if (first) return first;
+  const wav = await to_wav16k(file_path);
+  if (!wav) return null;
+  logger.info({ file: wav }, "🎤 Reintentando transcripción con WAV 16k (ffmpeg)");
+  return await transcribe_once(wav, "audio/wav");
+}
+
+async function transcribe_once(file_path, mime = "audio/ogg") {
   const auth = get_auth();
   if (!auth) return null;
   try {
