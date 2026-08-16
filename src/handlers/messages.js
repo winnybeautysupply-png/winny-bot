@@ -669,9 +669,19 @@ async function handle_audio(parsed, contact) {
   if (is_owner(from)) {
     // A la JEFA siempre se le confirma lo que se entendió (prueba de que el bot escucha),
     // y LUEGO se procesa su orden. Así nunca queda "en visto" tras un audio.
-    await send_text(from, `🎤 Te escuché jefa: "${text}"`);
-    const handled = await handle_owner_command(p);
-    if (!handled) await handle_owner_chat(p);
+    try {
+      const echo_sid = await send_text(from, `🎤 Te escuché jefa: "${text}"`);
+      logger.info({ from, echo_sid: echo_sid || null }, echo_sid ? "🎤 Eco de audio ENVIADO a la jefa" : "🎤 Eco de audio NO enviado (sid null)");
+    } catch (e) {
+      logger.error({ err: e?.message, from }, "🎤 Eco de audio a la jefa FALLÓ");
+    }
+    try {
+      const handled = await handle_owner_command(p);
+      logger.info({ from, handled }, "🎤 Audio jefa procesado como comando");
+      if (!handled) await handle_owner_chat(p);
+    } catch (e) {
+      logger.error({ err: e?.message, from }, "🎤 Error procesando orden de audio de la jefa");
+    }
   } else {
     await handle_text(p, contact);
   }
