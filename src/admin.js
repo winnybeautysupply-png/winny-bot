@@ -9,6 +9,22 @@ import db, { get_recent_inbound_contacts, save_message, get_open_orders, set_han
 import { send_text, send_image } from "./whatsapp.js";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
+import multer from "multer";
+import path from "path";
+
+// Subida de foto/video desde el panel → se guarda en el disco persistente
+// (carpeta de comprobantes, servida en /comprobantes) y se manda como media de WhatsApp.
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, config.receipts_dir),
+    filename: (req, file, cb) => {
+      const ext = (path.extname(file.originalname || "") || ".jpg").toLowerCase().slice(0, 6);
+      cb(null, `panel_${Date.now()}${ext}`);
+    }
+  }),
+  limits: { fileSize: 16 * 1024 * 1024 }, // 16 MB (límite de WhatsApp para video)
+  fileFilter: (req, file, cb) => cb(null, /^(image|video)\//.test(file.mimetype || ""))
+});
 
 const ADMIN_KEY = process.env.ADMIN_KEY || "";
 
@@ -121,10 +137,11 @@ function conversation(phone, notice) {
   // desde el número del bot). Solo para chats de WhatsApp (no Instagram).
   const paused = is_handed_off(phone);
   const replyBox = phone.startsWith("ig:") ? "" : `
-    <form class="reply" method="post" action="/admin/reply">
+    <form class="reply" method="post" action="/admin/reply" enctype="multipart/form-data">
       <input type="hidden" name="key" value="${esc(ADMIN_KEY)}">
       <input type="hidden" name="phone" value="${esc(phone)}">
-      <textarea name="msg" rows="2" placeholder="Escribe tu mensaje como Winny…" required></textarea>
+      <textarea name="msg" rows="2" placeholder="Escribe tu mensaje como Winny…"></textarea>
+      <input type="file" name="media" accept="image/*,video/*" style="margin-top:8px">
       <div class="row">
         <label><input type="checkbox" name="pausar" value="1" ${paused ? "checked" : ""}> pausar el bot 1h (la atiendes tú)</label>
         <button type="submit">Enviar 💬</button>
@@ -158,18 +175,32 @@ export function mount_admin(app) {
 
   // RESPONDER desde el panel: Winny escribe y le llega a la clienta por WhatsApp
   // desde el número del bot. Opcional: pausar el bot 1h para atenderla a mano.
-  app.post("/admin/reply", async (req, res) => {
+  app.post("/admin/reply", upload.single("media"), async (req, res) => {
     if (!ADMIN_KEY) return res.status(503).send("Falta ADMIN_KEY.");
     const { key, phone, msg, pausar } = req.body || {};
     if (key !== ADMIN_KEY) return res.status(401).send("Clave incorrecta.");
     const back = `/admin?key=${encodeURIComponent(ADMIN_KEY)}&phone=${encodeURIComponent(phone || "")}`;
-    if (!phone || !(msg || "").trim()) return res.redirect(back + "&err=" + encodeURIComponent("Falta el mensaje."));
+    const text = (msg || "").trim();
+    const file = req.file || null;
+    if (!phone || (!text && !file)) return res.redirect(back + "&err=" + encodeURIComponent("Escribe un mensaje o adjunta una foto/video."));
     try {
-      const sid = await send_text(phone, msg.trim());
+      let sid;
+      if (file) {
+        const media_url = `${config.public_base_url}/comprobantes/${file.filename}`;
+        sid = await send_image(phone, media_url, text); // sirve para foto Y video (MediaUrl de Twilio)
+      } else {
+        sid = await send_text(phone, text);
+      }
       if (!sid) return res.redirect(back + "&err=" + encodeURIComponent("WhatsApp rechazó el envío (¿ventana de 24h vencida?)."));
-      save_message({ phone, direction: "out", type: "text", content: msg.trim(), wa_message_id: sid });
+      save_message({
+        phone, direction: "out",
+        type: file ? (/^video\//.test(file.mimetype) ? "video" : "image") : "text",
+        content: text || (file ? "[foto/video del panel]" : ""),
+        media_path: file ? file.path : null,
+        wa_message_id: sid
+      });
       if (pausar === "1") set_handoff(phone, 60); else clear_handoff(phone);
-      logger.info({ phone, desde: "panel" }, "💬 Winny respondió desde el panel");
+      logger.info({ phone, desde: "panel", con_media: !!file }, "💬 Winny respondió desde el panel");
       return res.redirect(back + "&sent=1");
     } catch (e) {
       logger.error({ err: e.message, phone }, "Error enviando desde el panel");
