@@ -667,6 +667,9 @@ async function handle_audio(parsed, contact) {
   // Procesarlo como si la clienta lo hubiera ESCRITO
   const p = { ...parsed, type: "text", text };
   if (is_owner(from)) {
+    // A la JEFA siempre se le confirma lo que se entendió (prueba de que el bot escucha),
+    // y LUEGO se procesa su orden. Así nunca queda "en visto" tras un audio.
+    await send_text(from, `🎤 Te escuché jefa: "${text}"`);
     const handled = await handle_owner_command(p);
     if (!handled) await handle_owner_chat(p);
   } else {
