@@ -2,8 +2,8 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Instalar deps de compilación para better-sqlite3
-RUN apk add --no-cache python3 make g++
+# Instalar deps de compilación para better-sqlite3 + ffmpeg (fotogramas de videos de clientas)
+RUN apk add --no-cache python3 make g++ ffmpeg
 
 # Copiar package.json e instalar dependencias
 COPY package.json ./

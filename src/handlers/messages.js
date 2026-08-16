@@ -3,6 +3,7 @@
 // ═══════════════════════════════════════════════════════════════
 import fs from "fs";
 import path from "path";
+import { execFile } from "child_process";
 import { config, is_business_open } from "../config.js";
 import { logger } from "../logger.js";
 import {
@@ -150,12 +151,65 @@ async function handle_owner_video(parsed) {
 
 // Una CLIENTA manda un video (ej. una grabación de un estilo que le gustó).
 // No podemos "ver" el video, así que respondemos cálido y le pedimos detalles.
+// Extrae un fotograma JPEG de un video con ffmpeg. Devuelve base64 o null.
+function extract_frame(video_path, out_path, second) {
+  return new Promise(resolve => {
+    execFile("ffmpeg", ["-y", "-ss", String(second), "-i", video_path, "-frames:v", "1", "-q:v", "3", out_path],
+      { timeout: 20000 }, (err) => {
+        if (err || !fs.existsSync(out_path)) return resolve(null);
+        try { resolve(fs.readFileSync(out_path).toString("base64")); } catch { resolve(null); }
+      });
+  });
+}
+
+// La clienta manda un VIDEO → el bot lo "VE": extrae 2 fotogramas con ffmpeg,
+// los analiza con visión y responde según el contenido (peluca → recomienda
+// parecidas del catálogo; otra cosa → responde al contenido). Si algo falla,
+// cae al mensaje cálido de antes.
 async function handle_customer_video(parsed, contact) {
-  const { from } = parsed;
+  const { from, media_url, mime } = parsed;
   if (is_handed_off(from)) { logger.info({ from }, "Cliente en handoff — bot no responde (video)"); return; }
-  const msg = "¡Gracias por el video mi amor! 💕 Cuéntame qué te gustó (color, textura, largo) y te muestro las pelucas más parecidas de nuestro catálogo ✨ También puedes verlas en winnybeautysupply.com 🛍️";
-  const sid = await send_text(from, msg);
-  save_message({ phone: from, direction: "out", type: "text", content: msg, wa_message_id: sid });
+
+  const fallback = async () => {
+    const msg = "¡Gracias por el video mi amor! 💕 Cuéntame qué te gustó (color, textura, largo) y te muestro las pelucas más parecidas de nuestro catálogo ✨ También puedes verlas en winnybeautysupply.com 🛍️";
+    const sid = await send_text(from, msg);
+    save_message({ phone: from, direction: "out", type: "text", content: msg, wa_message_id: sid });
+  };
+
+  try {
+    // 1) Descargar el video
+    const ext = ((mime || "").split("/")[1] || "mp4").split(";")[0];
+    const dir = path.join(config.receipts_dir, "videos");
+    fs.mkdirSync(dir, { recursive: true });
+    const video_path = path.join(dir, `${from.replace(/\D/g, "")}-${Date.now()}.${ext}`);
+    const dl = await download_media(media_url, video_path);
+    if (!dl) return await fallback();
+
+    // 2) Fotogramas al segundo 1 y al 3 (si el video es corto, el 2do puede fallar — no importa)
+    const f1 = await extract_frame(video_path, video_path + ".f1.jpg", 1);
+    const f2 = await extract_frame(video_path, video_path + ".f2.jpg", 3);
+    const frames = [f1, f2].filter(Boolean).map(data => ({ data, media_type: "image/jpeg" }));
+    if (!frames.length) return await fallback();
+
+    // 3) Analizar con visión (mismo cerebro que las fotos)
+    const history = format_history(get_recent_messages(from, 8));
+    const cls = await analyze_image(frames, history);
+    if (!cls || !cls.descripcion) return await fallback();
+    logger.info({ from, cat: cls.categoria, desc: (cls.descripcion || "").slice(0, 120) }, "🎥 Video analizado (fotogramas)");
+
+    // 4) Guardar en el historial y responder al CONTENIDO del video
+    save_message({ phone: from, direction: "in", type: "text", content: `[Video de la clienta: ${cls.descripcion}]`, wa_message_id: `${parsed.id}-vid` });
+    const a = cls.atributos_cabello || {};
+    const attrs = [a.tipo, a.textura, a.color, a.largo].filter(Boolean).join(", ");
+    const synth =
+      `[La clienta me envió un VIDEO. Lo que se ve (análisis de fotogramas): ${cls.descripcion}${attrs ? ` (cabello visible: ${attrs})` : ""}. ` +
+      `Responde a ESO con cariño: si es una peluca/cabello/estilo, recomiéndale 2-3 productos del catálogo MÁS PARECIDOS CON SU PRECIO; ` +
+      `si es otra cosa, responde útil según el contenido. 🚫 No digas que "no puedes ver videos" — ya lo viste.]`;
+    await handle_text({ ...parsed, type: "text", text: synth }, contact);
+  } catch (err) {
+    logger.error({ err: err.message, from }, "Error analizando video de clienta");
+    await fallback();
+  }
 }
 
 // Winny (dueña) manda una o VARIAS fotos → ya clasificadas como álbum.
