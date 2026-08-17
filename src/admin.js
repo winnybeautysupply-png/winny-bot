@@ -27,6 +27,17 @@ const upload = multer({
 });
 
 const ADMIN_KEY = process.env.ADMIN_KEY || "";
+// Clave de EMPLEADA: acceso limitado al panel (ver + responder). NO puede ver
+// /pending ni disparar /flash. Se rota cambiando EMPLOYEE_KEY en Render sin
+// tocar la clave de la jefa.
+const EMPLOYEE_KEY = process.env.EMPLOYEE_KEY || "";
+
+// ¿Qué rol tiene esta clave? "jefa" | "empleada" | null
+function key_role(k) {
+  if (ADMIN_KEY && k === ADMIN_KEY) return "jefa";
+  if (EMPLOYEE_KEY && k === EMPLOYEE_KEY) return "empleada";
+  return null;
+}
 
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, c =>
@@ -93,7 +104,7 @@ function loginForm(msg) {
     <button type="submit">Entrar</button></form>`);
 }
 
-function contactsList() {
+function contactsList(key) {
   const rows = db.prepare(`
     SELECT c.phone AS phone, c.name AS name, c.last_seen AS last_seen,
       (SELECT m.content FROM messages m
@@ -107,7 +118,7 @@ function contactsList() {
   const items = rows.map(r => {
     const disp = prettyName(r.phone, r.name);
     const prev = (r.last_text || "").replace(/\s+/g, " ").slice(0, 70);
-    return `<a class="item" href="/admin?key=${encodeURIComponent(ADMIN_KEY)}&phone=${encodeURIComponent(r.phone)}">
+    return `<a class="item" href="/admin?key=${encodeURIComponent(key)}&phone=${encodeURIComponent(r.phone)}">
       <span class="time">${fmtTime(r.last_seen)}</span>
       <div class="n">${esc(disp)}</div>
       <div class="p">${esc(prev) || "&nbsp;"}</div></a>`;
@@ -117,7 +128,7 @@ function contactsList() {
     `<p class="sub">${rows.length} clientas — toca una para ver el chat completo</p>${items || "<p>Todavía no hay conversaciones.</p>"}`);
 }
 
-function conversation(phone, notice) {
+function conversation(phone, notice, key) {
   const c = db.prepare("SELECT name FROM contacts WHERE phone = ?").get(phone);
   const msgs = db.prepare(`
     SELECT direction, type, content, timestamp
@@ -138,7 +149,7 @@ function conversation(phone, notice) {
   const paused = is_handed_off(phone);
   const replyBox = phone.startsWith("ig:") ? "" : `
     <form class="reply" method="post" action="/admin/reply" enctype="multipart/form-data">
-      <input type="hidden" name="key" value="${esc(ADMIN_KEY)}">
+      <input type="hidden" name="key" value="${esc(key)}">
       <input type="hidden" name="phone" value="${esc(phone)}">
       <textarea name="msg" rows="2" placeholder="Escribe tu mensaje como Winny…"></textarea>
       <input type="file" name="media" accept="image/*,video/*" style="margin-top:8px">
@@ -150,7 +161,7 @@ function conversation(phone, notice) {
     <p class="sub" style="margin-top:6px">${paused ? "🔇 Bot en pausa con esta clienta." : "🤖 Bot activo con esta clienta."} Ojo: si su último mensaje tiene más de 24h, WhatsApp puede rechazar el envío.</p>`;
 
   return shell(disp,
-    `<a class="back" href="/admin?key=${encodeURIComponent(ADMIN_KEY)}">← Todas las clientas</a>
+    `<a class="back" href="/admin?key=${encodeURIComponent(key)}">← Todas las clientas</a>
      <div class="hd">${esc(disp)}</div>
      <div class="sub">${esc(phone.replace(/^whatsapp:/, ""))} · ${msgs.length} mensajes</div>
      ${notice || ""}
@@ -161,16 +172,17 @@ function conversation(phone, notice) {
 export function mount_admin(app) {
   app.get("/admin", (req, res) => {
     if (!ADMIN_KEY) return res.status(503).send("El visor no está configurado (falta ADMIN_KEY).");
-    if (req.query.key !== ADMIN_KEY) {
+    const role = key_role(req.query.key);
+    if (!role) {
       return res.status(req.query.key ? 401 : 200).send(loginForm(req.query.key ? "Clave incorrecta" : ""));
     }
     if (req.query.phone) {
       const notice = req.query.sent === "1"
         ? `<div class="notice">✅ Mensaje enviado a la clienta.</div>`
         : (req.query.err ? `<div class="notice err">⚠️ ${esc(req.query.err)}</div>` : "");
-      return res.send(conversation(String(req.query.phone), notice));
+      return res.send(conversation(String(req.query.phone), notice, String(req.query.key)));
     }
-    return res.send(contactsList());
+    return res.send(contactsList(String(req.query.key)));
   });
 
   // RESPONDER desde el panel: Winny escribe y le llega a la clienta por WhatsApp
@@ -178,8 +190,9 @@ export function mount_admin(app) {
   app.post("/admin/reply", upload.single("media"), async (req, res) => {
     if (!ADMIN_KEY) return res.status(503).send("Falta ADMIN_KEY.");
     const { key, phone, msg, pausar } = req.body || {};
-    if (key !== ADMIN_KEY) return res.status(401).send("Clave incorrecta.");
-    const back = `/admin?key=${encodeURIComponent(ADMIN_KEY)}&phone=${encodeURIComponent(phone || "")}`;
+    const role = key_role(key);
+    if (!role) return res.status(401).send("Clave incorrecta.");
+    const back = `/admin?key=${encodeURIComponent(key)}&phone=${encodeURIComponent(phone || "")}`;
     const text = (msg || "").trim();
     const file = req.file || null;
     if (!phone || (!text && !file)) return res.redirect(back + "&err=" + encodeURIComponent("Escribe un mensaje o adjunta una foto/video."));
@@ -200,7 +213,7 @@ export function mount_admin(app) {
         wa_message_id: sid
       });
       if (pausar === "1") set_handoff(phone, 60); else clear_handoff(phone);
-      logger.info({ phone, desde: "panel", con_media: !!file }, "💬 Winny respondió desde el panel");
+      logger.info({ phone, desde: `panel-${role}`, con_media: !!file }, `💬 Respuesta desde el panel (${role})`);
       return res.redirect(back + "&sent=1");
     } catch (e) {
       logger.error({ err: e.message, phone }, "Error enviando desde el panel");
