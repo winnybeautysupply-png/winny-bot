@@ -184,8 +184,7 @@ async function handle_owner_video(parsed) {
   }
   // Sin número → guardarlo y pedir a cuál clienta mandarlo.
   last_owner_video = { url: public_url };
-  await send_text(owner, "🎥 Recibí el video jefa. ¿A cuál clienta se lo mando? Pásame el número (ej: 8091234567) 💕
-O si es para el catálogo escríbeme: *catalogo: nombre, precio*");
+  await send_text(owner, "🎥 Recibí el video jefa. ¿A cuál clienta se lo mando? Pásame el número (ej: 8091234567) 💕\nO si es para el catálogo escríbeme: *catalogo: nombre, precio*");
 }
 
 // Una CLIENTA manda un video (ej. una grabación de un estilo que le gustó).
