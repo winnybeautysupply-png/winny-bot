@@ -125,6 +125,37 @@ async function forward_media_to_client(to, media_url, caption = "") {
   return sid;
 }
 
+
+// ═══ CATÁLOGO desde WhatsApp (jefa): foto/video + "catalogo: nombre, precio ..." ═══
+const CAT_RE = /^\s*(cat[aá]logo|producto|nuevo)\s*[:\-]\s*/i;
+// Videos/fotos recientes de la jefa sin destino aún (para "agrégalo al catálogo" enviado después)
+const pending_owner_media = []; // { url, at }
+function remember_owner_media(url) {
+  pending_owner_media.push({ url, at: Date.now() });
+  while (pending_owner_media.length > 5) pending_owner_media.shift();
+}
+function take_pending_owner_media() {
+  const cutoff = Date.now() - 30 * 60 * 1000; // últimos 30 min
+  const items = pending_owner_media.filter(m => m.at > cutoff);
+  pending_owner_media.length = 0;
+  return items.map(m => m.url);
+}
+async function add_catalog_from_media(owner, desc, media_url) {
+  const p = await parse_catalog_caption(desc);
+  if (!p || !p.nombre || (p.precio_detalle == null && p.precio_mayor == null)) {
+    await send_text(owner, "Para agregarlo al catálogo necesito nombre y precio jefa 💕 Escríbeme así:\n*catalogo: nombre del producto, precio, mayor X*\n(ej: catalogo: peluca rizada piano 20\", 2500, mayor 2000 x3)");
+    return false;
+  }
+  p.media_url = media_url;
+  const codigo = await append_catalog_product(p);
+  if (!codigo) { await send_text(owner, "No pude guardarlo en la hoja del catálogo jefa 😔 Revisa que la hoja esté compartida con el bot."); return false; }
+  const mayor = p.precio_mayor ? ` · Mayor: RD$${p.precio_mayor}${p.cant_mayor ? " (" + p.cant_mayor + ")" : ""}` : "";
+  const colores = p.colores ? `\nColores: ${p.colores}` : "";
+  await send_text(owner,
+    `✅ Agregado al catálogo jefa (código ${codigo}) 📚\n*${p.nombre}*\nDetalle: RD$${p.precio_detalle ?? "—"}${mayor}${colores}\nEtiquetas: ${p.etiquetas || "—"}\n\nYa el bot lo muestra a las clientas con ese ${/\.(mp4|mov|3gp)$/i.test(media_url) ? "video" : "foto"} 💕 Si algo está mal, corrígelo en la hoja.`);
+  return true;
+}
+
 // Winny (dueña) manda un VIDEO — casi siempre para reenviárselo a una clienta
 // (un reel de producto, un video de un estilo). Lo descargamos, lo servimos
 // públicamente y, si puso el número de la clienta, se lo mandamos. No toca pedidos.
@@ -137,6 +168,13 @@ async function handle_owner_video(parsed) {
   if (!dl) { await send_text(owner, "No me llegó bien el video jefa 😅 ¿me lo reenvías?"); return; }
   const public_url = `${config.public_base_url}/comprobantes/${filename}`;
 
+  // ¿Es para el CATÁLOGO? (caption "catalogo: nombre, precio")
+  if (CAT_RE.test(parsed.caption || "")) {
+    await add_catalog_from_media(owner, (parsed.caption || "").replace(CAT_RE, ""), public_url);
+    return;
+  }
+  remember_owner_media(public_url);
+
   const target = extract_phone(parsed.caption);
   if (target) {
     last_owner_video = null;
@@ -146,7 +184,8 @@ async function handle_owner_video(parsed) {
   }
   // Sin número → guardarlo y pedir a cuál clienta mandarlo.
   last_owner_video = { url: public_url };
-  await send_text(owner, "🎥 Recibí el video jefa. ¿A cuál clienta se lo mando? Pásame el número (ej: 8091234567) 💕");
+  await send_text(owner, "🎥 Recibí el video jefa. ¿A cuál clienta se lo mando? Pásame el número (ej: 8091234567) 💕
+O si es para el catálogo escríbeme: *catalogo: nombre, precio*");
 }
 
 // Una CLIENTA manda un video (ej. una grabación de un estilo que le gustó).
@@ -225,18 +264,10 @@ async function route_owner_batch(from, downloaded, cls, contact) {
   // Ej: foto + "catalogo: peluca rizada piano 20 pulgadas, 2500, mayor 2000 x3, colores negro y castaño"
   const cat_caption = downloaded.map(d => (d.caption || "").trim()).find(c => /^(cat[aá]logo|producto|nuevo)\s*[:\-]/i.test(c));
   if (cat_caption) {
-    const desc = cat_caption.replace(/^(cat[aá]logo|producto|nuevo)\s*[:\-]\s*/i, "");
-    const p = await parse_catalog_caption(desc);
-    if (!p || !p.nombre) { await send_text(owner, "No entendí bien el producto jefa 😅 Mándame la foto con el texto así: *catalogo: nombre, precio, mayor X* 💕"); return; }
-    p.media_url = public_url;
-    const codigo = await append_catalog_product(p);
-    if (!codigo) { await send_text(owner, "No pude guardarlo en la hoja del catálogo jefa 😔 Revisa que la hoja esté compartida con el bot."); return; }
-    const mayor = p.precio_mayor ? ` · Mayor: RD$${p.precio_mayor}${p.cant_mayor ? " (" + p.cant_mayor + ")" : ""}` : "";
-    const colores = p.colores ? `\nColores: ${p.colores}` : "";
-    await send_text(owner,
-      `✅ Agregado al catálogo jefa (código ${codigo}) 📚\n*${p.nombre}*\nDetalle: RD$${p.precio_detalle ?? "—"}${mayor}${colores}\nEtiquetas: ${p.etiquetas || "—"}\n\nYa el bot lo muestra a las clientas con esta foto 💕 Si algo está mal, corrígelo en la hoja.`);
+    await add_catalog_from_media(owner, cat_caption.replace(CAT_RE, ""), public_url);
     return;
   }
+  remember_owner_media(public_url);
 
   const isReceipt = !!(cls && (cls.es_recibo_envio || cls.categoria === "recibo_envio"));
 
@@ -757,6 +788,30 @@ function parse_owner_command(text) {
 
 async function handle_owner_command(parsed) {
   const owner = config.business.owner_phone;
+
+  // ═══ CATÁLOGO por texto: "catalogo: nombre, precio" o "agrégalo al catálogo" tras mandar foto/video ═══
+  {
+    const t = (parsed.text || "").trim();
+    const is_cat_cmd = CAT_RE.test(t) || /(agr[eé]ga|a[ñn]ade|sube|pon)\w*\s.*cat[aá]logo|al cat[aá]logo/i.test(t);
+    if (is_cat_cmd) {
+      const media = take_pending_owner_media();
+      if (!media.length) {
+        await send_text(owner, "Mándame primero la foto o el video del producto jefa, y luego *catalogo: nombre, precio* 💕 (o ponlo como pie de foto)");
+        return true;
+      }
+      const desc = t.replace(CAT_RE, "");
+      // Si solo dijo "agrégalo al catálogo" sin datos, pedimos nombre+precio y dejamos el media en cola
+      if (!/\d/.test(desc)) {
+        media.forEach(remember_owner_media);
+        await send_text(owner, `Ok jefa, tengo ${media.length} ${media.length > 1 ? "archivos listos" : "archivo listo"} 💕 Dime nombre y precio así:\n*catalogo: nombre del producto, precio, mayor X*`);
+        return true;
+      }
+      // Varios videos + una sola descripción → se agrega con el ÚLTIMO; los demás se avisan
+      const ok = await add_catalog_from_media(owner, desc, media[media.length - 1]);
+      if (ok && media.length > 1) await send_text(owner, `(Usé el último video/foto. Si los otros ${media.length - 1} son productos distintos, mándame cada uno con su *catalogo: nombre, precio* 💕)`);
+      return true;
+    }
+  }
 
   // ═══ MODO ADMIN ═══
   // (a) Confirmación pendiente de un "enviar a X: Y" (Winny responde sí/no)
