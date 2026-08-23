@@ -12,7 +12,7 @@ import {
 } from "../whatsapp.js";
 import {
   upsert_contact, save_message, get_recent_messages,
-  set_handoff, is_handed_off, clear_handoff,
+  set_handoff, is_handed_off, clear_handoff, mark_human_reply, mark_handoff_hold, get_handoff_state,
   get_active_order, create_order, update_order,
   get_pending_verification, get_latest_pending_verification,
   get_customer_orders, set_shipping,
@@ -270,6 +270,7 @@ async function route_owner_batch(from, downloaded, cls, contact) {
       if (!t) { await send_text(owner, "¿A cuál clienta se lo mando jefa? Pásame el número 💕"); continue; }
       const sid = await send_text(t, tool.input.mensaje);
       save_message({ phone: t, direction: "out", type: "text", content: tool.input.mensaje, wa_message_id: sid });
+      mark_human_reply(t);
       await send_text(owner, `✅ Listo jefa, le mandé a la clienta (+${t}):\n"${tool.input.mensaje}"`);
     }
   }
@@ -981,6 +982,7 @@ async function handle_owner_chat(parsed) {
       }
       const msg_id = await send_text(target, tool.input.mensaje);
       save_message({ phone: target, direction: "out", type: "text", content: tool.input.mensaje, wa_message_id: msg_id });
+      mark_human_reply(target);
       await send_text(from, `✅ Listo jefa, le mandé a la clienta (+${target}):\n"${tool.input.mensaje}"`);
     }
   }
@@ -997,9 +999,27 @@ async function handle_owner_chat(parsed) {
 async function handle_text(parsed, contact) {
   const { from, text } = parsed;
 
-  // Si está en handoff (humano atendiendo), no responder con bot
+  // Si está en handoff (humano atendiendo), no responder con bot...
+  // ...SALVO que ningún humano haya contestado todavía: en ese caso la clienta no puede
+  // quedar en visto. Le mandamos un "un momento" (máx. 1 cada 15 min) y re-avisamos a Winny.
   if (is_handed_off(from)) {
-    logger.info({ from }, "Cliente en handoff — bot no responde");
+    const st = get_handoff_state(from);
+    const human_replied = (st.handoff_human_at || 0) > 0;
+    const hold_recent = (Date.now() - (st.handoff_hold_at || 0)) < 15 * 60 * 1000;
+    if (human_replied || hold_recent) {
+      logger.info({ from, human_replied, hold_recent }, "Cliente en handoff — bot no responde");
+      return;
+    }
+    const hold = "Sí amor, ya le estoy consultando a Winny 💕 En cuanto me confirme te escribo por aquí mismo, no te preocupes ✨";
+    const sid = await send_text(from, hold);
+    save_message({ phone: from, direction: "out", type: "text", content: hold, wa_message_id: sid });
+    mark_handoff_hold(from);
+    await notify_winny({
+      from, contact_name: contact?.name,
+      reason: "La clienta volvió a escribir y NADIE le ha respondido aún (sigue esperando)",
+      urgency: "alta", message: text
+    });
+    logger.info({ from }, "Cliente en handoff sin respuesta humana — enviado mensaje de espera + re-aviso a Winny");
     return;
   }
 

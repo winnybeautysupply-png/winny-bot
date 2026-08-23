@@ -98,6 +98,11 @@ for (const col of ["summary TEXT", "summary_at_msg INTEGER DEFAULT 0"]) {
   try { db.exec(`ALTER TABLE contacts ADD COLUMN ${col}`); } catch { /* la columna ya existe */ }
 }
 
+// Migracion: HANDOFF con seguimiento — saber si un humano ya contesto y cuando fue el ultimo "espera un momento"
+for (const col of ["handoff_human_at INTEGER DEFAULT 0", "handoff_hold_at INTEGER DEFAULT 0"]) {
+  try { db.exec(`ALTER TABLE contacts ADD COLUMN ${col}`); } catch { /* la columna ya existe */ }
+}
+
 // Registro de comprobantes de pago recibidos — para DETECTAR FRAUDE (referencias repetidas).
 db.exec(`
   CREATE TABLE IF NOT EXISTS payments (
@@ -217,7 +222,20 @@ export function get_recent_messages(phone, limit = 10) {
 
 export function set_handoff(phone, minutes = 60) {
   const until = Date.now() + minutes * 60 * 1000;
-  db.prepare("UPDATE contacts SET handed_off_until = ? WHERE phone = ?").run(until, phone);
+  db.prepare("UPDATE contacts SET handed_off_until = ?, handoff_human_at = 0, handoff_hold_at = 0 WHERE phone = ?").run(until, phone);
+}
+
+// Un humano (Winny o el panel) le respondio a la clienta -> el bot ya puede quedarse callado con tranquilidad.
+export function mark_human_reply(phone) {
+  db.prepare("UPDATE contacts SET handoff_human_at = ? WHERE phone = ?").run(Date.now(), phone);
+}
+
+export function mark_handoff_hold(phone) {
+  db.prepare("UPDATE contacts SET handoff_hold_at = ? WHERE phone = ?").run(Date.now(), phone);
+}
+
+export function get_handoff_state(phone) {
+  return db.prepare("SELECT handed_off_until, handoff_human_at, handoff_hold_at FROM contacts WHERE phone = ?").get(phone) || {};
 }
 
 export function clear_handoff(phone) {

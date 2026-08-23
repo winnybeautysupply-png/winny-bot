@@ -5,7 +5,7 @@
 //   /admin?key=CLAVE              → lista de clientas
 //   /admin?key=CLAVE&phone=XXXX   → conversación con esa clienta
 // ═══════════════════════════════════════════════════════════════
-import db, { get_recent_inbound_contacts, save_message, get_open_orders, set_handoff, clear_handoff, is_handed_off } from "./db.js";
+import db, { get_recent_inbound_contacts, save_message, get_open_orders, set_handoff, clear_handoff, is_handed_off, mark_human_reply } from "./db.js";
 import { send_text, send_image } from "./whatsapp.js";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
@@ -212,7 +212,7 @@ export function mount_admin(app) {
         media_path: file ? file.path : null,
         wa_message_id: sid
       });
-      if (pausar === "1") set_handoff(phone, 60); else clear_handoff(phone);
+      if (pausar === "1") { set_handoff(phone, 60); mark_human_reply(phone); } else clear_handoff(phone);
       logger.info({ phone, desde: `panel-${role}`, con_media: !!file }, `💬 Respuesta desde el panel (${role})`);
       return res.redirect(back + "&sent=1");
     } catch (e) {
