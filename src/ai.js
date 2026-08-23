@@ -523,3 +523,22 @@ export async function summarize_client(prev_summary, convo_text, orders_text = "
     return null;
   }
 }
+
+// ─── Parsear "catalogo: ..." de la jefa a un producto estructurado ─────
+export async function parse_catalog_caption(caption) {
+  try {
+    const response = await claude.messages.create({
+      model: config.claude.model,
+      max_tokens: 300,
+      temperature: 0,
+      system: "Convierte la descripción informal de un producto de una tienda de belleza dominicana a JSON. Devuelve SOLO JSON con: nombre (string, corto y vendible, ej. 'Peluca rizada piano 20\"'), precio_detalle (número RD$ o null), precio_mayor (número o null), cant_mayor (string o ''), precio_caja (número o null), unidades_caja (string o ''), colores (string o ''), etiquetas (string: 5-8 palabras clave separadas por coma para búsquedas: tipo, textura, largo, color, material), oferta (boolean). Interpreta 'k' como miles (2.5k=2500), 'mayor'/'al por mayor'/'x3' como precio_mayor y cant_mayor. No inventes datos que no estén.",
+      messages: [{ role: "user", content: caption }]
+    });
+    const text = response.content?.find(b => b.type === "text")?.text?.trim() || "";
+    const m = text.match(/\{[\s\S]*\}/);
+    return m ? JSON.parse(m[0]) : null;
+  } catch (e) {
+    logger.error({ err: e?.message }, "Error parseando producto de catálogo");
+    return null;
+  }
+}

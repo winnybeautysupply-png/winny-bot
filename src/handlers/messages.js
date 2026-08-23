@@ -19,8 +19,8 @@ import {
   find_duplicate_payment, record_payment,
   get_contact_summary, set_contact_summary, summary_is_stale
 } from "../db.js";
-import { generate_response, extract_order_from_chat, generate_owner_response, analyze_image, summarize_client } from "../ai.js";
-import { append_order_row, find_latest_order_by_phone, append_log_row } from "../sheets.js";
+import { generate_response, extract_order_from_chat, generate_owner_response, analyze_image, summarize_client, parse_catalog_caption } from "../ai.js";
+import { append_order_row, find_latest_order_by_phone, append_log_row, append_catalog_product } from "../sheets.js";
 import { generate_invoice } from "../invoice.js";
 import { transcribe_audio, transcription_enabled } from "../transcribe.js";
 import { find_products, get_offers } from "../catalog.js";
@@ -221,6 +221,23 @@ async function route_owner_batch(from, downloaded, cls, contact) {
   const rep = downloaded[0];
   const public_url = `${config.public_base_url}/comprobantes/${rep.filename}`;
   const envio = cls?.datos_envio || {};
+  // ¿La jefa está SUBIENDO UN PRODUCTO AL CATÁLOGO? Caption que empiece con "catalogo:" / "producto:" / "nuevo:".
+  // Ej: foto + "catalogo: peluca rizada piano 20 pulgadas, 2500, mayor 2000 x3, colores negro y castaño"
+  const cat_caption = downloaded.map(d => (d.caption || "").trim()).find(c => /^(cat[aá]logo|producto|nuevo)\s*[:\-]/i.test(c));
+  if (cat_caption) {
+    const desc = cat_caption.replace(/^(cat[aá]logo|producto|nuevo)\s*[:\-]\s*/i, "");
+    const p = await parse_catalog_caption(desc);
+    if (!p || !p.nombre) { await send_text(owner, "No entendí bien el producto jefa 😅 Mándame la foto con el texto así: *catalogo: nombre, precio, mayor X* 💕"); return; }
+    p.media_url = public_url;
+    const codigo = await append_catalog_product(p);
+    if (!codigo) { await send_text(owner, "No pude guardarlo en la hoja del catálogo jefa 😔 Revisa que la hoja esté compartida con el bot."); return; }
+    const mayor = p.precio_mayor ? ` · Mayor: RD$${p.precio_mayor}${p.cant_mayor ? " (" + p.cant_mayor + ")" : ""}` : "";
+    const colores = p.colores ? `\nColores: ${p.colores}` : "";
+    await send_text(owner,
+      `✅ Agregado al catálogo jefa (código ${codigo}) 📚\n*${p.nombre}*\nDetalle: RD$${p.precio_detalle ?? "—"}${mayor}${colores}\nEtiquetas: ${p.etiquetas || "—"}\n\nYa el bot lo muestra a las clientas con esta foto 💕 Si algo está mal, corrígelo en la hoja.`);
+    return;
+  }
+
   const isReceipt = !!(cls && (cls.es_recibo_envio || cls.categoria === "recibo_envio"));
 
   // ¿Winny puso el número de una clienta en algún caption del álbum?

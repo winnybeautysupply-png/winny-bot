@@ -224,3 +224,35 @@ export async function set_notified(rowNumber, value) {
     return false;
   }
 }
+
+// ─── CATÁLOGO: agregar producto desde WhatsApp (jefa) ───────────
+// Lee el último código usado en la pestaña del catálogo y agrega una fila
+// con el orden de columnas de catalog.js:
+// Código | Nombre | Precio detalle | Precio mayor | Cant. mayor | Precio caja |
+// Unidades caja | Colores | Etiquetas | Oferta | Video/Foto | Disponible
+export async function append_catalog_product(p) {
+  const sheets = get_client();
+  if (!sheets) return null;
+  const sid = config.sheets.catalog_sheet_id;
+  const tab = config.sheets.catalog_tab;
+  try {
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId: sid, range: `${tab}!A:A` });
+    const codes = (res.data.values || []).slice(1).map(r => parseInt((r[0] || "").toString().replace(/\D/g, ""), 10)).filter(Number.isFinite);
+    const codigo = String((codes.length ? Math.max(...codes) : 0) + 1);
+    const row = [
+      codigo, p.nombre, p.precio_detalle ?? "", p.precio_mayor ?? "", p.cant_mayor ?? "",
+      p.precio_caja ?? "", p.unidades_caja ?? "", p.colores ?? "", p.etiquetas ?? "",
+      p.oferta ? "Sí" : "No", p.media_url ?? "", "Sí"
+    ];
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: sid, range: `${tab}!A1`,
+      valueInputOption: "USER_ENTERED", insertDataOption: "INSERT_ROWS",
+      requestBody: { values: [row] }
+    });
+    logger.info({ codigo, nombre: p.nombre }, "📚 Producto agregado al catálogo desde WhatsApp");
+    return codigo;
+  } catch (err) {
+    logger.error({ err: err.message }, "Error agregando producto al catálogo");
+    return null;
+  }
+}
