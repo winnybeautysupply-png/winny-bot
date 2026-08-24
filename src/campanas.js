@@ -159,11 +159,18 @@ async function vuelta() {
   const c = campana_activa();
   if (!c) return;
 
+  // El aviso de cómo va se manda al cerrar el día, fuera del horario de envío.
+  try { await revisar_reporte(c); } catch (e) { logger.error({ err: e.message }, "Campañas: fallo el reporte"); }
+
   const h = hora_rd();
   if (h < HORA_DESDE || h >= HORA_HASTA) return;
 
   const n = conteo(c.id);
-  if (!n.pendientes) { cambiar_estado_campana(c.id, "terminada"); return; }
+  if (!n.pendientes) {
+    cambiar_estado_campana(c.id, "terminada");
+    await avisar_final(c);
+    return;
+  }
 
   const cupo = Math.max(0, c.por_dia - n.hoy);
   if (!cupo) return;
@@ -216,4 +223,60 @@ export function start_campaign_poller() {
     }, 10 * 60 * 1000);
   }, 3 * 60 * 1000);
   logger.info({ plantilla: PLANTILLA_REACTIVACION }, "📣 Campañas listas");
+}
+
+// ─── Mandarle la plantilla a un número para verla ────────────────
+// Winny quiere ver EXACTAMENTE cómo le llega el mensaje a la clienta.
+export async function enviar_prueba(phone, nombre = "reina") {
+  const to = String(phone || config.business.owner_phone).replace(/\D/g, "");
+  const sid = await send_wa_template(to, PLANTILLA_REACTIVACION, { "1": nombre });
+  logger.info({ to, sid }, "📣 Plantilla de prueba enviada");
+  return sid;
+}
+
+// ─── Aviso a Winny de cómo va la campaña ─────────────────────────
+// Un solo mensaje al cerrar el día (8pm) con lo que importa: cuántas
+// respondieron. Y otro cuando la campaña termina del todo.
+try { db.exec("ALTER TABLE campaigns ADD COLUMN reporte_at INTEGER DEFAULT 0"); } catch { /* ya existe */ }
+
+async function avisar_como_va(c, final = false) {
+  const n = conteo(c.id);
+  const tasa = n.enviados ? Math.round((n.respondieron / n.enviados) * 100) : 0;
+  const juicio = !n.enviados ? ""
+    : tasa >= 15 ? "\n\n🔥 Eso está MUY bueno. De cada 100 que reciben, más de 15 te contestan."
+    : tasa >= 7 ? "\n\n💚 Va bien. Es una respuesta normal-buena para este tipo de mensaje."
+    : tasa >= 3 ? "\n\n🙂 Va floja pero sirve. Vale la pena seguir."
+    : "\n\n⚠️ Está respondiendo muy poca gente. Si sigue así, mejor cambiamos el mensaje.";
+
+  const texto = final
+    ? `📣 *Campaña terminada: ${c.nombre}*\n\n` +
+      `📤 Enviados: ${n.enviados} de ${n.total}\n` +
+      `💬 Te respondieron: *${n.respondieron}* (${tasa}%)\n` +
+      `⏭️ Saltadas: ${n.saltados}${n.fallidos ? `\n❌ Fallidas: ${n.fallidos}` : ""}` + juicio
+    : `📣 *Cómo va tu campaña "${c.nombre}"*\n\n` +
+      `📤 Hoy salieron: ${n.hoy}\n` +
+      `📤 En total: ${n.enviados} de ${n.total}\n` +
+      `💬 Te han respondido: *${n.respondieron}* (${tasa}%)\n` +
+      `⏳ Faltan: ${n.pendientes}` + juicio +
+      `\n\nLas que responden caen en tu panel y las atiende el bot 💕`;
+
+  await send_text(config.business.owner_phone, texto);
+  db.prepare("UPDATE campaigns SET reporte_at = ? WHERE id = ?").run(Date.now(), c.id);
+  logger.info({ id: c.id, enviados: n.enviados, respondieron: n.respondieron, final }, "📣 Reporte de campaña enviado a Winny");
+}
+
+// Se llama en cada vuelta, ANTES del horario de envío.
+export async function revisar_reporte(c) {
+  if (!c) return;
+  const hoy = inicio_dia();
+  if ((c.reporte_at || 0) >= hoy) return;   // ya se le avisó hoy
+  if (hora_rd() < 20) return;               // se avisa al cerrar el día
+  if (!conteo(c.id).enviados) return;       // nada que reportar todavía
+  await avisar_como_va(c, false);
+}
+
+export async function avisar_final(c) {
+  try { await avisar_como_va(c, true); } catch (e) {
+    logger.error({ err: e.message }, "No pude avisar del fin de la campaña");
+  }
 }

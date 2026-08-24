@@ -42,7 +42,7 @@ import {
 } from "./ventas.js";
 import {
   audiencia, crear_campana, campana_activa, listar_campanas, conteo,
-  cambiar_estado_campana, start_campaign_poller
+  cambiar_estado_campana, start_campaign_poller, enviar_prueba
 } from "./campanas.js";
 import {
   TABLAS, exportar_csv, copiar_base, conteos, respaldos_guardados,
@@ -845,6 +845,18 @@ function vistaRespaldo(key, role, nombre) {
   `, { key, role, nombre, activa: "respaldo" });
 }
 
+// Botón para mandarse la plantilla a sí misma y verla como llega.
+function formPrueba(key) {
+  return `<form method="post" action="/panel/campana/prueba" style="margin-top:10px">
+      <input type="hidden" name="key" value="${esc(key)}">
+      <div class="row">
+        <input type="text" name="destino" placeholder="Tu número (vacío = tu personal)" style="flex:1;min-width:150px">
+        <button class="ghost" type="submit">📲 Mándamela a mí</button>
+      </div>
+      <p class="muted" style="margin:6px 0 0">Te llega igualita que a la clienta, desde el número del bot.</p>
+    </form>`;
+}
+
 // ─── Vista: CAMPAÑAS (solo jefa) ─────────────────────────────────
 function vistaCampanas(key, role, nombre, notice = "") {
   const k = encodeURIComponent(key);
@@ -891,6 +903,8 @@ function vistaCampanas(key, role, nombre, notice = "") {
         </form>
       </div>
       <p class="muted" style="margin:9px 0 0">Sale de 9am a 8pm, con 12 segundos entre cada mensaje. Las que respondan caen solitas en tu bandeja y las atiende Claude.</p>
+      <p class="muted">📲 Todos los días a las 8pm te aviso por WhatsApp cómo va: cuántas salieron, cuántas te respondieron y si eso es bueno o malo.</p>
+      ${formPrueba(key)}
     </div>`;
   })() : "";
 
@@ -1819,6 +1833,22 @@ self.addEventListener("fetch", e => {
         `Campaña creada con ${r.total} clientas. Empieza a salir sola entre 9am y 8pm.`));
     } catch (e) {
       return res.redirect(atras + "&err=" + encodeURIComponent(e.message));
+    }
+  });
+
+  // Mandarse la plantilla a sí misma para verla como le llega a la clienta.
+  app.post("/panel/campana/prueba", async (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    const atras = `/panel/campanas?key=${encodeURIComponent(g.key)}`;
+    const destino = (req.body?.destino || "").toString().replace(/\D/g, "") || null;
+    try {
+      const sid = await enviar_prueba(destino, "Winny");
+      res.redirect(atras + (sid
+        ? "&ok=" + encodeURIComponent("Te la mandé por WhatsApp. Revisa tu teléfono 💕")
+        : "&err=" + encodeURIComponent("WhatsApp no la aceptó. Revisa el número.")));
+    } catch (e) {
+      res.redirect(atras + "&err=" + encodeURIComponent("Error: " + e.message));
     }
   });
 
