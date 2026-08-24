@@ -16,7 +16,7 @@
 // ═══════════════════════════════════════════════════════════════
 import path from "path";
 import multer from "multer";
-import db, { set_handoff, clear_handoff, is_handed_off, mark_human_reply } from "./db.js";
+import db, { set_handoff, clear_handoff, is_handed_off, mark_human_reply, get_open_orders } from "./db.js";
 import { send_text, send_image } from "./whatsapp.js";
 import { find_products, get_offers, get_by_code } from "./catalog.js";
 import {
@@ -224,7 +224,7 @@ function shell(title, inner, { key = "", role = "", nombre = "", activa = "" } =
       <a class="${activa === "apartados" ? "on" : ""}" href="/panel/apartados?key=${k}">🔖 Apartados</a>
       ${role === "jefa" ? `<a class="${activa === "dash" ? "on" : ""}" href="/panel/dashboard?key=${k}">📊 Números</a>` : ""}
       ${role === "jefa" ? `<a class="${activa === "equipo" ? "on" : ""}" href="/panel/equipo?key=${k}">👥 Equipo</a>` : ""}
-      ${role === "jefa" ? `<a href="/pending?key=${k}">🧾 Pedidos abiertos</a>` : ""}
+      ${role === "jefa" ? `<a class="${activa === "pedidos" ? "on" : ""}" href="/panel/pedidos?key=${k}">🧾 Pedidos</a>` : ""}
     </nav>` : "";
 
   return `<!doctype html><html lang="es"><head><meta charset="utf-8">
@@ -651,6 +651,85 @@ function apartadosCard(phone, key) {
   </div>`;
 }
 
+// ─── Vista: PEDIDOS (solo jefa) ──────────────────────────────────
+// Antes esto era un enlace a /pending, que devolvía datos crudos (JSON) y
+// parecía roto. Ahora es una página de verdad, ordenada por urgencia.
+function vistaPedidos(key, role, nombre) {
+  const k = encodeURIComponent(key);
+  let abiertos = [];
+  try { abiertos = get_open_orders(); } catch (e) {
+    return shell("Pedidos", `<div class="notice err">No pude leer los pedidos: ${esc(e.message)}</div>`,
+      { key, role, nombre, activa: "pedidos" });
+  }
+
+  const now = Date.now();
+  const GRUPOS = [
+    { estado: "awaiting_verification", titulo: "⚠️ Pagaron — falta que confirmes", clase: "rojo",
+      ayuda: "Mandaron el comprobante. Revísalo y confírmalo para que salga la factura." },
+    { estado: "paid", titulo: "📦 Pagados — falta enviar", clase: "amar",
+      ayuda: "Ya está el dinero. Falta despacharlos." },
+    { estado: "awaiting_payment", titulo: "⏳ Esperando que paguen", clase: "ia", ayuda: "" },
+    { estado: "draft", titulo: "🛒 Carritos sin terminar", clase: "tag",
+      ayuda: "Empezaron a pedir y no cerraron. Buenos para dar seguimiento." }
+  ];
+
+  const tarjeta = o => {
+    const dias = Math.floor((now - (o.created_at || now)) / 86400000);
+    const nombreCli = o.customer_name || o.contact_name || o.phone;
+    const comprobante = o.receipt_path
+      ? `<a href="/comprobantes/${encodeURIComponent(String(o.receipt_path).split(/[\\/]/).pop())}" target="_blank">📄 ver comprobante</a>`
+      : "";
+    return `<div class="item">
+      <span class="time">${dias === 0 ? "hoy" : `${dias} día(s)`}</span>
+      <div class="n">${esc(nombreCli)}</div>
+      <div class="p" style="white-space:normal">${esc(productos_de(o.items) || "—")}</div>
+      <div class="muted" style="margin-top:4px">
+        ${o.total ? `<b>RD$${rd(o.total)}</b> · ` : ""}${esc(o.phone.replace(/^whatsapp:/, ""))}
+        ${o.delivery_address ? ` · ${esc(String(o.delivery_address).slice(0, 60))}` : ""}
+      </div>
+      <div class="row" style="margin-top:7px">
+        <a class="pill hum" href="/panel/chat?key=${k}&phone=${encodeURIComponent(o.phone)}">💬 Abrir conversación</a>
+        ${comprobante ? `<span class="pill tag">${comprobante}</span>` : ""}
+      </div></div>`;
+  };
+
+  const secciones = GRUPOS.map(g => {
+    const items = abiertos.filter(o => o.status === g.estado);
+    if (!items.length) return "";
+    return `<h3 style="margin:18px 0 6px">${g.titulo} <span class="pill ${g.clase}">${items.length}</span></h3>
+      ${g.ayuda ? `<p class="muted" style="margin:0 0 6px">${g.ayuda}</p>` : ""}
+      ${items.map(tarjeta).join("")}`;
+  }).join("");
+
+  // Si NO hay pedidos abiertos, hay que distinguir dos cosas muy distintas:
+  // que todo esté cerrado (bien) o que el bot no esté registrando nada (mal).
+  let recientes = 0;
+  try {
+    recientes = db.prepare("SELECT COUNT(*) AS n FROM orders WHERE created_at >= ?")
+      .get(now - 30 * 86400000)?.n || 0;
+  } catch { recientes = 0; }
+
+  const t = (num, txt) => `<div class="tile"><b>${num}</b><span>${txt}</span></div>`;
+  const cuenta = e => abiertos.filter(o => o.status === e).length;
+  const dinero = e => abiertos.filter(o => o.status === e).reduce((s, o) => s + (Number(o.total) || 0), 0);
+
+  return shell("Pedidos", `
+    <h2 style="margin:4px 0 10px">🧾 Pedidos abiertos</h2>
+    <div class="tiles">
+      ${t(cuenta("awaiting_verification"), "⚠️ Por confirmar")}
+      ${t(cuenta("paid"), "📦 Por enviar")}
+      ${t(cuenta("awaiting_payment"), "⏳ Esperando pago")}
+      ${t("RD$" + rd(dinero("awaiting_verification") + dinero("paid")), "💰 Dinero en juego")}
+    </div>
+    ${secciones || (recientes
+      ? `<p class="muted">No hay pedidos abiertos ahora mismo ✨ (${recientes} pedido(s) en los últimos 30 días, ya cerrados)</p>`
+      : `<div class="notice err"><b>Ojo:</b> no hay ningún pedido registrado en los últimos 30 días.
+         Si has estado vendiendo, quiere decir que el bot está conversando pero <b>no está guardando los pedidos</b>
+         (pasó antes, en julio). Dímelo y lo reviso.</div>`)}
+    <p class="muted" style="margin-top:16px">Para confirmar un pago y que salga la factura, escríbele al bot desde tu WhatsApp: <b>confirmar +número</b>. Los estados de envío se siguen manejando en tu hoja de Google.</p>
+  `, { key, role, nombre, activa: "pedidos" });
+}
+
 // ─── Vista: APARTADOS (todas) ────────────────────────────────────
 function vistaApartados(key, role, nombre, filtro, notice = "") {
   const k = encodeURIComponent(key);
@@ -930,6 +1009,13 @@ export function mount_panel(app) {
     const g = guard(req, res); if (!g) return;
     if (soloJefa(g, res)) return;
     res.send(vistaDashboard(g.key, g.role, g.nombre));
+  });
+
+  // ── PEDIDOS (solo jefa) ──
+  app.get("/panel/pedidos", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    res.send(vistaPedidos(g.key, g.role, g.nombre));
   });
 
   // ── APARTADOS ──
