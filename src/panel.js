@@ -34,6 +34,10 @@ import {
   METODOS, categorias, set_categorias, registrar_venta, anular_venta,
   ventas_del_dia, cuadre, borrar_venta_anulada
 } from "./ventas.js";
+import {
+  audiencia, crear_campana, campana_activa, listar_campanas, conteo,
+  cambiar_estado_campana, start_campaign_poller
+} from "./campanas.js";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
 
@@ -249,6 +253,7 @@ function shell(title, inner, { key = "", role = "", nombre = "", activa = "" } =
       <a class="${activa === "caja" ? "on" : ""}" href="/panel/caja?key=${k}">🧾 Caja</a>
       <a class="${activa === "apartados" ? "on" : ""}" href="/panel/apartados?key=${k}">🔖 Apartados</a>
       ${role === "jefa" ? `<a class="${activa === "dash" ? "on" : ""}" href="/panel/dashboard?key=${k}">📊 Números</a>` : ""}
+      ${role === "jefa" ? `<a class="${activa === "campanas" ? "on" : ""}" href="/panel/campanas?key=${k}">📣 Campañas</a>` : ""}
       ${role === "jefa" ? `<a class="${activa === "equipo" ? "on" : ""}" href="/panel/equipo?key=${k}">👥 Equipo</a>` : ""}
       ${role === "jefa" ? `<a class="${activa === "pedidos" ? "on" : ""}" href="/panel/pedidos?key=${k}">🧾 Pedidos</a>` : ""}
       <a class="${activa === "app" ? "on" : ""}" href="/panel/app?key=${k}">📲 App</a>
@@ -312,6 +317,9 @@ a{color:var(--pink);text-decoration:none}
 .msg img,.msg video{max-width:100%;border-radius:9px;display:block;margin-top:5px}
 .meta{font-size:.66rem;color:#98a0ab;margin-top:3px;text-align:right}
 .clear{clear:both}
+.dia{clear:both;text-align:center;margin:14px 0 6px;font-size:.72rem;color:#7a828e;font-weight:700}
+.dia:before,.dia:after{content:"";display:inline-block;width:22%;height:1px;background:var(--line);
+  vertical-align:middle;margin:0 8px}
 textarea,input[type=text],input[type=password],input[type=search]{width:100%;font-size:1rem;padding:10px;
   border-radius:10px;border:1px solid #ccd0d6;font-family:inherit}
 button{background:var(--pink);color:#fff;border:0;font-weight:700;cursor:pointer;padding:10px 16px;
@@ -350,7 +358,7 @@ function loginForm(msg) {
 }
 
 // ─── Vista: BANDEJA ──────────────────────────────────────────────
-function vistaBandeja(key, role, nombre, filtro) {
+function vistaBandeja(key, role, nombre, filtro, buscar = "") {
   const rows = inbox_rows();
   const n = contar(rows);
   const k = encodeURIComponent(key);
@@ -358,7 +366,14 @@ function vistaBandeja(key, role, nombre, filtro) {
   const conApartado = phones_con_apartado();
 
   let lista = rows;
-  if (filtro === "mias") lista = rows.filter(r => r.assigned_to === nombre);
+  if (buscar) {
+    const b = buscar.toLowerCase();
+    lista = rows.filter(r =>
+      (r.name || "").toLowerCase().includes(b) ||
+      (r.phone || "").includes(b.replace(/\D/g, "")) ||
+      (r.last_text || "").toLowerCase().includes(b));
+  }
+  else if (filtro === "mias") lista = rows.filter(r => r.assigned_to === nombre);
   else if (filtro === "pendientes") lista = rows.filter(r => r.estado === "pendiente");
   else if (filtro === "esperando") lista = rows.filter(r => r.estado === "esperando");
   else if (filtro === "ia") lista = rows.filter(r => r.atendida_por === "ia");
@@ -409,14 +424,32 @@ function vistaBandeja(key, role, nombre, filtro) {
       <div class="p">${esc(prev) || "&nbsp;"}</div></a>`;
   }).join("");
 
-  return shell("Bandeja", `${tiles}
-    <p class="muted">${lista.length} conversaciones${filtro && filtro !== "todas" ? " en este filtro" : ""} · las que llevan más tiempo esperando salen primero</p>
+  const buscador = `<form method="get" action="/panel" class="row" style="margin:0 0 10px">
+      <input type="hidden" name="key" value="${esc(key)}">
+      <input type="search" name="buscar" value="${esc(buscar)}" placeholder="Buscar clienta por nombre o teléfono…" style="flex:1;min-width:170px">
+      <button type="submit">Buscar</button>
+      ${buscar ? `<a class="pill tag" href="/panel?key=${k}">✕ quitar</a>` : ""}
+    </form>`;
+
+  return shell("Bandeja", `${buscador}${buscar ? "" : tiles}
+    <p class="muted">${lista.length} conversaciones${buscar ? ` con «${esc(buscar)}»` : (filtro && filtro !== "todas" ? " en este filtro" : "")}${buscar ? "" : " · las que llevan más tiempo esperando salen primero"}</p>
     ${items || "<p class='muted'>Nada por aquí ✨</p>"}`,
     { key, role, nombre, activa: filtro === "mias" ? "mias" : "bandeja" });
 }
 
 // ─── Vista: CONVERSACIÓN ─────────────────────────────────────────
-function vistaChat(phone, key, role, nombre, { notice = "", productos = null, q = "" } = {}) {
+// "Hoy" / "Ayer" / "23 de agosto de 2026" — para no perderse en el chat.
+function diaEtiqueta(ts) {
+  const hoy = inicioDelDia();
+  if (ts >= hoy) return "Hoy";
+  if (ts >= hoy - 86400000) return "Ayer";
+  try {
+    return new Date(ts).toLocaleDateString("es-DO",
+      { timeZone: "America/Santo_Domingo", day: "numeric", month: "long", year: "numeric" });
+  } catch { return ""; }
+}
+
+function vistaChat(phone, key, role, nombre, { notice = "", productos = null, q = "", buscar = "", todos = false } = {}) {
   const f = ficha(phone);
   const disp = prettyName(phone, f.c.name);
   const k = encodeURIComponent(key);
@@ -424,12 +457,23 @@ function vistaChat(phone, key, role, nombre, { notice = "", productos = null, q 
   const esIG = phone.startsWith("ig:");
   const pausado = is_handed_off(phone);
 
-  const msgs = db.prepare(`
-    SELECT direction, type, content, timestamp, media_path, source
-    FROM messages WHERE phone = ? ORDER BY timestamp ASC LIMIT 1500
-  `).all(phone);
+  // Por defecto solo los ÚLTIMOS 60 mensajes: abrir una conversación de 800
+  // mensajes desde el principio era inservible. Lo viejo se pide aparte.
+  const total_msgs = db.prepare("SELECT COUNT(*) AS n FROM messages WHERE phone = ?").get(phone)?.n || 0;
+  const msgs = buscar
+    ? db.prepare(`SELECT direction, type, content, timestamp, media_path, source, agent
+                  FROM messages WHERE phone = ? AND content LIKE ?
+                  ORDER BY timestamp DESC LIMIT 100`).all(phone, `%${buscar}%`).reverse()
+    : db.prepare(`SELECT direction, type, content, timestamp, media_path, source, agent
+                  FROM messages WHERE phone = ?
+                  ORDER BY timestamp DESC LIMIT ?`).all(phone, todos ? 2000 : 60).reverse();
 
+  let dia_actual = "";
   const burbujas = msgs.map(m => {
+    let sep = "";
+    const d = diaEtiqueta(m.timestamp);
+    if (d !== dia_actual) { dia_actual = d; sep = `<div class="dia">${esc(d)}</div>`; }
+
     const quien = m.direction === "out" ? `out${m.source === "humano" ? " hum" : ""}` : "in";
     let cuerpo = esc(m.content || "");
     if (m.type !== "text" && m.media_path) {
@@ -440,9 +484,25 @@ function vistaChat(phone, key, role, nombre, { notice = "", productos = null, q 
     } else if (m.type !== "text") {
       cuerpo += ` [${esc(m.type)}]`;
     }
-    const firma = m.direction === "out" ? (m.source === "humano" ? "👤 " : "🤖 ") : "";
-    return `<div class="msg ${quien}">${cuerpo}<div class="meta">${firma}${esc(fmtTime(m.timestamp))}</div></div>`;
-  }).join("") + `<div class="clear"></div>`;
+    const firma = m.direction === "out"
+      ? (m.source === "humano" ? `👤 ${esc(m.agent || "")} ` : "🤖 ")
+      : "";
+    const hora = fmtTime(m.timestamp).split(", ")[1] || fmtTime(m.timestamp);
+    return `${sep}<div class="msg ${quien}">${cuerpo}<div class="meta">${firma}${esc(hora)}</div></div>`;
+  }).join("") + `<div class="clear"></div><div id="fin"></div>`;
+
+  // Cabecera del chat: buscar dentro de la conversación y traer lo viejo.
+  const herramientas = `<form method="get" action="/panel/chat" class="row" style="margin-bottom:8px">
+      <input type="hidden" name="key" value="${esc(key)}"><input type="hidden" name="phone" value="${esc(phone)}">
+      <input type="search" name="buscar" value="${esc(buscar)}" placeholder="Buscar en esta conversación…" style="flex:1;min-width:150px">
+      <button class="ghost" type="submit">Buscar</button>
+      ${buscar ? `<a class="pill tag" href="/panel/chat?key=${k}&phone=${p}">✕ quitar</a>` : ""}
+    </form>
+    ${buscar
+      ? `<p class="muted">${msgs.length} mensaje(s) con «${esc(buscar)}» · <a href="/panel/chat?key=${k}&phone=${p}">ver la conversación completa</a></p>`
+      : (total_msgs > msgs.length
+        ? `<p class="muted" style="text-align:center"><a href="/panel/chat?key=${k}&phone=${p}&todos=1">⬆️ Ver los ${total_msgs - msgs.length} mensajes anteriores</a></p>`
+        : "")}`;
 
   // ── Resumen de IA ──
   const ai = f.ai;
@@ -591,12 +651,20 @@ function vistaChat(phone, key, role, nombre, { notice = "", productos = null, q 
     <div class="chatgrid">
       <div>
         ${control}
+        ${herramientas}
         <div class="chat">${burbujas || "<p class='muted'>Sin mensajes.</p>"}</div>
         ${responder}
         ${catalogo}
       </div>
       <div>${aiCard}${fichaCard}</div>
-    </div>`, { key, role, nombre, activa: "bandeja" });
+    </div>
+    <script>
+    (function(){
+      // Abrir siempre en el mensaje MÁS NUEVO, como WhatsApp — no arriba del todo.
+      var fin = document.getElementById("fin");
+      if (fin && !${buscar ? "true" : "false"}) fin.scrollIntoView({ block: "end" });
+    })();
+    </script>`, { key, role, nombre, activa: "bandeja" });
 }
 
 // ─── Apartados de una clienta (dentro del chat) ──────────────────
@@ -693,6 +761,108 @@ function apartadosCard(phone, key) {
       </form>
     </details>
   </div>`;
+}
+
+// ─── Vista: CAMPAÑAS (solo jefa) ─────────────────────────────────
+function vistaCampanas(key, role, nombre, notice = "") {
+  const k = encodeURIComponent(key);
+  const activa = campana_activa();
+  const historial = listar_campanas().filter(c => !activa || c.id !== activa.id);
+
+  // Cuánta gente hay en cada público, para que decida con números.
+  let n_escribieron = 0, n_nunca = 0;
+  try { n_escribieron = audiencia("escribieron", 7).length; } catch { }
+  try { n_nunca = audiencia("nunca", 7).length; } catch { }
+
+  const t = (num, txt) => `<div class="tile"><b>${num}</b><span>${txt}</span></div>`;
+
+  const enCurso = activa ? (() => {
+    const c = conteo(activa.id);
+    const pct = c.total ? Math.round((c.enviados / c.total) * 100) : 0;
+    const tasa = c.enviados ? Math.round((c.respondieron / c.enviados) * 100) : 0;
+    return `<div class="card">
+      <h3>📣 Campaña en curso</h3>
+      <div style="font-weight:700;font-size:1.05rem">${esc(activa.nombre)}</div>
+      <div class="muted" style="margin-bottom:8px">${esc(activa.audiencia)} · ${activa.por_dia} por día</div>
+      <div style="background:#eee;border-radius:20px;height:10px;overflow:hidden;margin:10px 0">
+        <div style="width:${pct}%;height:100%;background:var(--pink)"></div>
+      </div>
+      <div class="tiles">
+        ${t(c.enviados + "/" + c.total, "Enviados")}
+        ${t(c.hoy + "/" + activa.por_dia, "Hoy")}
+        ${t(c.respondieron, "💬 Respondieron")}
+        ${t(tasa + "%", "🎯 Respuesta")}
+      </div>
+      ${c.saltados ? `<p class="muted">${c.saltados} saltadas (ya estaban escribiendo o pidieron no recibir).</p>` : ""}
+      ${c.fallidos ? `<p class="muted">${c.fallidos} fallidas.</p>` : ""}
+      <div class="row">
+        <form method="post" action="/panel/campana/estado">
+          <input type="hidden" name="key" value="${esc(key)}"><input type="hidden" name="id" value="${activa.id}">
+          <input type="hidden" name="estado" value="pausada">
+          <button class="grey" type="submit">⏸️ Pausar</button>
+        </form>
+        <form method="post" action="/panel/campana/estado"
+              onsubmit="return confirm('¿Terminar la campaña? No se le escribirá a las que faltan.')">
+          <input type="hidden" name="key" value="${esc(key)}"><input type="hidden" name="id" value="${activa.id}">
+          <input type="hidden" name="estado" value="terminada">
+          <button class="grey" type="submit">⏹️ Terminar</button>
+        </form>
+      </div>
+      <p class="muted" style="margin:9px 0 0">Sale de 9am a 8pm, con 12 segundos entre cada mensaje. Las que respondan caen solitas en tu bandeja y las atiende Claude.</p>
+    </div>`;
+  })() : "";
+
+  const historialHtml = historial.map(c => `<div class="item">
+      <span class="time">${esc(fmtTime(c.created_at))}</span>
+      <div class="n">${esc(c.nombre)} <span class="pill ${c.estado === "terminada" ? "hum" : "tag"}">${esc(c.estado)}</span></div>
+      <div class="p">${c.enviados} enviados · ${c.respondieron} respondieron${c.enviados ? ` (${Math.round((c.respondieron / c.enviados) * 100)}%)` : ""}</div>
+      ${c.estado === "pausada" ? `<form method="post" action="/panel/campana/estado" style="margin-top:6px">
+        <input type="hidden" name="key" value="${esc(key)}"><input type="hidden" name="id" value="${c.id}">
+        <input type="hidden" name="estado" value="activa">
+        <button class="ghost" type="submit" style="padding:7px 11px;font-size:.78rem">▶️ Reanudar</button></form>` : ""}
+    </div>`).join("");
+
+  return shell("Campañas", `
+    <h2 style="margin:4px 0 10px">📣 Alcanzar más clientas</h2>
+    ${notice}
+    ${enCurso}
+    ${activa ? "" : `<div class="card">
+      <h3>Nueva campaña</h3>
+      <p class="muted" style="margin:0 0 10px">Le escribe a clientas que hace rato no te hablan, con el mensaje que Meta ya te aprobó:</p>
+      <div class="notice" style="font-style:italic">"Hola [nombre] 💕 Soy Winny de Winny Beauty Supply. Tenemos novedades y ofertas nuevas en pelo, pelucas y productos de belleza. ¿Quieres que te cuente? Respóndeme SÍ y te atiendo al momento 🙏✨"</div>
+      <form method="post" action="/panel/campana/nueva" style="margin-top:12px">
+        <input type="hidden" name="key" value="${esc(key)}">
+        <input type="text" name="nombre" placeholder="Nombre de la campaña (ej: Reactivación agosto)" required>
+
+        <p style="font-weight:700;margin:14px 0 6px">¿A quién?</p>
+        <label style="display:block;background:#fff;border:1.5px solid var(--line);border-radius:12px;padding:11px;margin-bottom:8px">
+          <input type="radio" name="tipo" value="escribieron" checked>
+          <b>Clientas que ya te escribieron</b> — ${n_escribieron} personas
+          <div class="muted">Te conocen. Es el público seguro y el que más responde.</div>
+        </label>
+        <label style="display:block;background:#fff;border:1.5px solid #f6ccc8;border-radius:12px;padding:11px">
+          <input type="radio" name="tipo" value="nunca">
+          <b>Contactos que nunca han escrito</b> — ${n_nunca} personas
+          <div class="muted" style="color:#8a1c24">⚠️ Son los importados de tu agenda. Nunca te han escrito por aquí, así que muchas pueden reportar el mensaje como spam — y si eso pasa, Meta te baja la calidad del número y te lo puede bloquear. Si los vas a usar, hazlo de 20 en 20.</div>
+        </label>
+
+        <div class="row" style="margin-top:12px">
+          <div style="flex:1;min-width:130px">
+            <div class="muted">Que lleven sin escribir</div>
+            <input type="text" name="dias" inputmode="numeric" value="7"> <span class="muted">días</span>
+          </div>
+          <div style="flex:1;min-width:130px">
+            <div class="muted">Máximo por día</div>
+            <input type="text" name="por_dia" inputmode="numeric" value="50">
+          </div>
+        </div>
+        <button class="big" type="submit">Empezar campaña</button>
+      </form>
+      <p class="muted" style="margin:10px 0 0">Cada mensaje de estos le cuesta a Meta unos centavos de dólar. 50 al día es poco dinero y mucho cuidado con tu número.</p>
+    </div>`}
+
+    ${historialHtml ? `<h3 style="margin:18px 0 8px">Campañas anteriores</h3>${historialHtml}` : ""}
+  `, { key, role, nombre, activa: "campanas" });
 }
 
 // ─── Vista: CAJA (venta de mostrador) ────────────────────────────
@@ -1237,7 +1407,8 @@ self.addEventListener("fetch", e => {
 
   app.get("/panel", (req, res) => {
     const g = guard(req, res); if (!g) return;
-    res.send(vistaBandeja(g.key, g.role, g.nombre, (req.query.f || "").toString()));
+    res.send(vistaBandeja(g.key, g.role, g.nombre, (req.query.f || "").toString(),
+      (req.query.buscar || "").toString().trim().slice(0, 60)));
   });
 
   // Instrucciones para instalarla en el celular.
@@ -1294,13 +1465,54 @@ self.addEventListener("fetch", e => {
         logger.error({ err: e.message }, "Panel: error buscando en el catálogo");
       }
     }
-    res.send(vistaChat(phone, g.key, g.role, g.nombre, { notice, productos, q }));
+    res.send(vistaChat(phone, g.key, g.role, g.nombre, {
+      notice, productos, q,
+      buscar: (req.query.buscar || "").toString().trim().slice(0, 60),
+      todos: String(req.query.todos || "") === "1"
+    }));
   });
 
   app.get("/panel/dashboard", (req, res) => {
     const g = guard(req, res); if (!g) return;
     if (soloJefa(g, res)) return;
     res.send(vistaDashboard(g.key, g.role, g.nombre));
+  });
+
+  // ── CAMPAÑAS (solo jefa) ──
+  app.get("/panel/campanas", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    let notice = "";
+    if (req.query.ok) notice = `<div class="notice">✅ ${esc(String(req.query.ok))}</div>`;
+    if (req.query.err) notice = `<div class="notice err">⚠️ ${esc(String(req.query.err))}</div>`;
+    res.send(vistaCampanas(g.key, g.role, g.nombre, notice));
+  });
+
+  app.post("/panel/campana/nueva", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    const b = req.body || {};
+    const atras = `/panel/campanas?key=${encodeURIComponent(g.key)}`;
+    try {
+      const r = crear_campana({
+        nombre: (b.nombre || "").toString(),
+        tipo: (b.tipo || "escribieron").toString(),
+        dias: parseInt(String(b.dias).replace(/\D/g, ""), 10) || 7,
+        por_dia: parseInt(String(b.por_dia).replace(/\D/g, ""), 10) || 50,
+        por: g.nombre
+      });
+      return res.redirect(atras + "&ok=" + encodeURIComponent(
+        `Campaña creada con ${r.total} clientas. Empieza a salir sola entre 9am y 8pm.`));
+    } catch (e) {
+      return res.redirect(atras + "&err=" + encodeURIComponent(e.message));
+    }
+  });
+
+  app.post("/panel/campana/estado", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    cambiar_estado_campana(parseInt(req.body?.id, 10), (req.body?.estado || "").toString());
+    res.redirect(`/panel/campanas?key=${encodeURIComponent(g.key)}&ok=` + encodeURIComponent("Listo."));
   });
 
   // ── CAJA (venta de mostrador) ──
@@ -1649,6 +1861,7 @@ self.addEventListener("fetch", e => {
   // arranca él, y el bot sigue atendiendo igual.
   start_supervisor();
   start_layaway_poller();
+  start_campaign_poller();
 
   logger.info("🖥️  Panel v2 montado en /panel");
 }

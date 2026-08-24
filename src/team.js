@@ -95,7 +95,9 @@ export function productividad(desde) {
       if (esperando_desde === null) esperando_desde = m.timestamp;
       continue;
     }
-    const quien = m.source === "humano" ? (m.agent || "Panel") : "🤖 Claude";
+    const quien = m.source === "humano" ? (m.agent || "Panel")
+      : m.source === "campana" ? "📣 Campaña"
+      : "🤖 Claude";
     const s = get(quien);
     s.mensajes++;
     s.clientas.add(m.phone);
