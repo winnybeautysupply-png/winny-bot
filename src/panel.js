@@ -23,7 +23,7 @@ import db, {
 import { send_text, send_image } from "./whatsapp.js";
 import { find_products, get_offers, get_by_code, get_catalog } from "./catalog.js";
 import {
-  todo_el_stock, mover, ajustar, resumen_inventario, por_acabarse, existencia
+  todo_el_stock, mover, ajustar, resumen_inventario, por_acabarse, existencia, olvidar
 } from "./inventario.js";
 import {
   list_employees, create_employee, set_active, regenerate_key, find_by_key, productividad, delete_employee,
@@ -890,7 +890,12 @@ async function vistaInventario(key, role, nombre, permisos, buscar = "", notice 
         <button name="cantidad" value="1" class="ghost" style="padding:9px 14px">+1</button>
         <input type="text" name="contar" inputmode="numeric" placeholder="tengo…" style="flex:1;min-width:80px">
         <button type="submit" name="accion" value="contar" style="padding:9px 13px;font-size:.8rem">Guardar</button>
-      </form></div>`;
+      </form>
+      ${s ? `<form method="post" action="/panel/inventario/olvidar" style="margin-top:5px">
+        <input type="hidden" name="key" value="${esc(key)}"><input type="hidden" name="codigo" value="${esc(p.codigo)}">
+        <button class="grey" type="submit" style="padding:5px 9px;font-size:.7rem">dejarlo sin contar</button>
+      </form>` : ""}
+      </div>`;
   };
 
   const t = (num, txt) => `<div class="tile"><b>${num}</b><span>${txt}</span></div>`;
@@ -2086,6 +2091,14 @@ self.addEventListener("fetch", e => {
     } catch (e) {
       return res.redirect(atras + "&err=" + encodeURIComponent(e.message));
     }
+  });
+
+  app.post("/panel/inventario/olvidar", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (!puede(g, "caja")) return sinPermiso(g, res, "el inventario");
+    olvidar((req.body?.codigo || "").toString());
+    res.redirect(`/panel/inventario?key=${encodeURIComponent(g.key)}&ok=` +
+      encodeURIComponent("Ese producto volvió a quedar sin contar."));
   });
 
   // ── CAJA (venta de mostrador) ──

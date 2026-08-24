@@ -126,3 +126,10 @@ export function contexto_inventario() {
   if (!filas.length) return "";
   return filas.map(f => `#${f.codigo} ${f.nombre || ""}`).join(", ");
 }
+
+// Dejar un producto "sin contar" otra vez (para deshacer un conteo mal hecho).
+// Se borra la existencia pero NO los movimientos: el historial no se toca.
+export function olvidar(codigo) {
+  db.prepare("DELETE FROM inventory WHERE codigo = ?").run(String(codigo || ""));
+  logger.info({ codigo }, "📦 Producto vuelto a 'sin contar'");
+}
