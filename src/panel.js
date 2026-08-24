@@ -56,7 +56,8 @@ for (const col of [
   "tags TEXT",               // etiquetas separadas por coma
   "panel_ai TEXT",           // último análisis de IA (JSON)
   "panel_ai_at INTEGER DEFAULT 0",
-  "taken_by TEXT"            // quién tomó la conversación (jefa/empleada)
+  "taken_by TEXT",           // quién tomó la conversación (jefa/empleada)
+  "cumple TEXT"              // cumpleaños de la clienta (AAAA-MM-DD)
 ]) {
   try { db.exec(`ALTER TABLE contacts ADD COLUMN ${col}`); } catch { /* ya existe */ }
 }
@@ -148,6 +149,14 @@ function prettyName(phone, name) {
   return phone.replace(/^whatsapp:/, "");
 }
 
+// ¿Hoy cumple años? Se compara solo mes y día (el año da igual).
+function esCumpleHoy(cumple) {
+  if (!cumple || cumple.length < 5) return false;
+  const hoy = new Date(Date.now() - 4 * 3600000); // Santo Domingo
+  const p = n => String(n).padStart(2, "0");
+  return cumple.slice(-5) === `${p(hoy.getUTCMonth() + 1)}-${p(hoy.getUTCDate())}`;
+}
+
 function ownerDigits() {
   return (config.business.owner_phone || "").replace(/\D/g, "");
 }
@@ -173,7 +182,7 @@ function inbox_rows(limit = 300) {
   const rows = db.prepare(`
     SELECT c.phone AS phone, c.name AS name, c.last_seen AS last_seen,
            c.handed_off_until AS handoff, c.tags AS tags, c.panel_ai AS panel_ai,
-           c.taken_by AS taken_by, c.assigned_to AS assigned_to,
+           c.taken_by AS taken_by, c.assigned_to AS assigned_to, c.cumple AS cumple,
            (SELECT m.content FROM messages m WHERE m.phone = c.phone AND m.type = 'text'
               ORDER BY m.timestamp DESC LIMIT 1) AS last_text,
            (SELECT MAX(m.timestamp) FROM messages m WHERE m.phone = c.phone AND m.direction = 'in') AS last_in,
@@ -214,7 +223,7 @@ function contar(rows) {
 // Ficha comercial de la clienta: compras, gasto, último pedido.
 function ficha(phone) {
   const c = db.prepare(`SELECT phone, name, first_seen, last_seen, summary, notes, tags,
-                               panel_ai, panel_ai_at, taken_by, handed_off_until, assigned_to
+                               panel_ai, panel_ai_at, taken_by, handed_off_until, assigned_to, cumple
                         FROM contacts WHERE phone = ?`).get(phone) || { phone };
   const compras = db.prepare(`
     SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS gastado
@@ -231,7 +240,15 @@ function ficha(phone) {
   const nmsgs = db.prepare("SELECT COUNT(*) AS n FROM messages WHERE phone = ?").get(phone)?.n || 0;
   let ai = null;
   try { ai = c.panel_ai ? JSON.parse(c.panel_ai) : null; } catch { ai = null; }
-  return { c, compras, ultimo, abiertos, nmsgs, ai };
+  // Puntos de fidelidad: 1 punto por cada RD$100 que ha gastado.
+  const puntos = Math.floor((Number(compras.gastado) || 0) / 100);
+  // De dónde es (lo dijo al hacer un pedido).
+  const zona = db.prepare(`SELECT provincia, ubicacion, delivery_address FROM orders
+                           WHERE phone = ? AND (provincia IS NOT NULL OR delivery_address IS NOT NULL)
+                           ORDER BY created_at DESC LIMIT 1`).get(phone) || {};
+  const lugar = zona.provincia || zona.ubicacion ||
+    (zona.delivery_address ? String(zona.delivery_address).slice(0, 40) : "");
+  return { c, compras, ultimo, abiertos, nmsgs, ai, puntos, lugar };
 }
 
 const ESTADOS_PEDIDO = {
@@ -424,6 +441,7 @@ function vistaBandeja(key, role, nombre, filtro, buscar = "") {
         ? `<span class="pill hum">👤 ${esc(r.taken_by || "humano")}</span>`
         : `<span class="pill ia">🤖 Claude</span>`) +
       (r.assigned_to && r.assigned_to !== r.taken_by ? `<span class="pill tag">👩 ${esc(r.assigned_to)}</span>` : "") +
+      (esCumpleHoy(r.cumple) ? `<span class="pill amar">🎂 Cumple hoy</span>` : "") +
       (conApartado.has(r.phone)
         ? `<span class="pill ${conApartado.get(r.phone).vencido ? "urg" : "amar"}">🔖 ${conApartado.get(r.phone).vencido ? "Apartado vencido" : `Apartado: faltan RD$${rd(conApartado.get(r.phone).balance)}`}</span>`
         : "") + tags;
@@ -547,11 +565,19 @@ function vistaChat(phone, key, role, nombre, { notice = "", productos = null, q 
   const fichaCard = `<div class="card">
     <h3>👩 Clienta</h3>
     <div style="font-weight:700;font-size:1.05rem">${esc(disp)}</div>
-    <div class="muted" style="margin-bottom:8px">${esc(phone.replace(/^whatsapp:/, ""))} · ${esIG ? "Instagram" : "WhatsApp"}</div>
+    <div class="muted" style="margin-bottom:8px">${esc(phone.replace(/^whatsapp:/, ""))} · ${esIG ? "Instagram" : "WhatsApp"}${f.lugar ? ` · 📍 ${esc(f.lugar)}` : ""}</div>
+    ${esCumpleHoy(f.c.cumple) ? `<p class="notice">🎂 ¡Hoy es su cumpleaños!</p>` : ""}
     <div class="kv"><span>Clienta desde</span><b>${esc(fmtTime(f.c.first_seen) || "—")}</b></div>
     <div class="kv"><span>Compras</span><b>${f.compras.n}</b></div>
     <div class="kv"><span>Total gastado</span><b>RD$${rd(f.compras.gastado)}</b></div>
+    <div class="kv"><span>⭐ Puntos</span><b>${rd(f.puntos)}</b></div>
     <div class="kv"><span>Mensajes</span><b>${f.nmsgs}</b></div>
+    <form method="post" action="/panel/cumple" class="row" style="margin-top:8px">
+      <input type="hidden" name="key" value="${esc(key)}"><input type="hidden" name="phone" value="${esc(phone)}">
+      <span class="muted" style="flex:1">🎂 Cumpleaños</span>
+      <input type="date" name="cumple" value="${esc(f.c.cumple || "")}" style="flex:1;min-width:135px;padding:8px;border-radius:9px;border:1px solid #ccd0d6">
+      <button class="ghost" type="submit" style="padding:8px 12px;font-size:.78rem">Guardar</button>
+    </form>
     ${ult ? `<div class="kv"><span>Último pedido</span><b>${esc(ESTADOS_PEDIDO[ult.status] || ult.status)}</b></div>
       <div class="muted" style="margin-top:4px">${esc(productos_de(ult.items) || "—")}${ult.total ? ` · RD$${rd(ult.total)}` : ""}</div>
       ${ult.guia_envio ? `<div class="muted">🚚 ${esc(ult.empresa_envio || "")} guía ${esc(ult.guia_envio)}</div>` : ""}`
@@ -1318,6 +1344,13 @@ function vistaDashboard(key, role, nombre) {
 
   const t = (num, txt) => `<div class="tile"><b>${num}</b><span>${txt}</span></div>`;
 
+  // Las que cumplen años hoy: una felicitación vende más que cualquier promoción.
+  const cumpleanos = rows.filter(r => esCumpleHoy(r.cumple))
+    .map(r => `<a class="item" href="/panel/chat?key=${encodeURIComponent(key)}&phone=${encodeURIComponent(r.phone)}">
+        <span class="time">🎂</span>
+        <div class="n">${esc(prettyName(r.phone, r.name))}</div>
+        <div class="p">Escríbele y felicítala</div></a>`).join("");
+
   // Las que llevan más rato esperando: la lista de "apágale el fuego a esto ya".
   const urgentes = rows.filter(r => r.estado === "pendiente")
     .sort((a, b) => (a.last_in || 0) - (b.last_in || 0)).slice(0, 8)
@@ -1367,6 +1400,7 @@ function vistaDashboard(key, role, nombre) {
     <h3 style="margin:16px 0 8px">👥 Quién trabajó hoy</h3>
     ${tablaProductividad(desde)}
     ${bloqueSupervisor(key)}
+    ${cumpleanos ? `<h3 style="margin:16px 0 8px">🎂 Cumpleaños de hoy</h3>${cumpleanos}` : ""}
     ${urgentes ? `<h3 style="margin:16px 0 8px">⏱️ Llevan más tiempo esperando</h3>${urgentes}` : ""}
     <p class="muted" style="margin-top:14px">Los números son de hoy en horario de Santo Domingo. «Atendió Claude» / «Atendió humano» cuenta clientas distintas, no mensajes.</p>
   `, { key, role, nombre, activa: "dash" });
@@ -2078,6 +2112,14 @@ self.addEventListener("fetch", e => {
   });
 
   // ── Notas y etiquetas ──
+  app.post("/panel/cumple", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    const phone = (req.body?.phone || "").toString();
+    const v = (req.body?.cumple || "").toString().trim().slice(0, 10) || null;
+    db.prepare("UPDATE contacts SET cumple = ? WHERE phone = ?").run(v, phone);
+    res.redirect(volver(g.key, phone, "&ok=" + encodeURIComponent(v ? "Cumpleaños guardado 🎂" : "Cumpleaños borrado.")));
+  });
+
   app.post("/panel/nota", (req, res) => {
     const g = guard(req, res); if (!g) return;
     const phone = (req.body?.phone || "").toString();
