@@ -46,6 +46,16 @@ app.get("/data-deletion", (_req, res) => res.sendFile(path.resolve("assets/legal
 // Visor privado de conversaciones (protegido por ADMIN_KEY).
 mount_admin(app);
 
+// PANEL v2 — centro de atención (bandeja con estados, ficha de clienta, resumen
+// de IA, catálogo rápido, números del día). Se carga de forma AISLADA: si el
+// panel fallara, el bot sigue atendiendo WhatsApp con normalidad.
+try {
+  const { mount_panel } = await import("./panel.js");
+  mount_panel(app);
+} catch (err) {
+  logger.error({ err: err.message }, "⚠️  No se pudo montar el Panel v2 (el bot sigue funcionando)");
+}
+
 // ─── Health & landing ────────────────────────────────────────────
 app.get("/", (_req, res) => {
   res.send(`
