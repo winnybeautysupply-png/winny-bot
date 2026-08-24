@@ -47,6 +47,22 @@ const AVISOS_POR_HORA = 8;          // techo para no ahogar el WhatsApp de Winny
 let modelo_actual = MODELO_BARATO;  // si Haiku no está disponible, cae al del bot
 let avisos_recientes = [];          // marcas de tiempo de los avisos enviados
 
+// Última vuelta, para diagnosticar sin entrar a los logs de Render.
+let ultimo = { ts: 0, candidatas: 0, analizadas: 0, avisadas: 0, error: null };
+export function estado_supervisor() {
+  return {
+    encendido: supervisor_encendido(),
+    modelo: modelo_actual,
+    analisis_hoy: analisis_hoy(),
+    tope_diario: MAX_DIA,
+    ultima_vuelta: ultimo.ts ? new Date(ultimo.ts).toISOString() : null,
+    candidatas: ultimo.candidatas,
+    analizadas: ultimo.analizadas,
+    avisadas: ultimo.avisadas,
+    error: ultimo.error
+  };
+}
+
 // ─── Ajustes (interruptor del panel) ─────────────────────────────
 export function get_setting(k, def = null) {
   const row = db.prepare("SELECT v FROM settings WHERE k = ?").get(k);
@@ -176,9 +192,11 @@ ${link ? `\n👉 Ábrela aquí: ${link}` : ""}`;
 
 // ─── Vuelta del supervisor ───────────────────────────────────────
 async function vuelta() {
-  if (!supervisor_encendido()) return;
+  ultimo = { ts: Date.now(), candidatas: 0, analizadas: 0, avisadas: 0, error: null };
+  if (!supervisor_encendido()) { ultimo.error = "apagado"; return; }
   const hechos = analisis_hoy();
   if (hechos >= MAX_DIA) {
+    ultimo.error = "tope diario alcanzado";
     logger.info({ hechos, MAX_DIA }, "Supervisor: tope diario alcanzado, descansando");
     return;
   }
@@ -201,6 +219,7 @@ async function vuelta() {
     .filter(r => now - (r.ai_at || 0) > COOLDOWN)                   // no la analizamos hace nada
     .slice(0, Math.min(POR_VUELTA, MAX_DIA - hechos));
 
+  ultimo.candidatas = pendientes.length;
   if (!pendientes.length) return;
 
   let ok = 0, avisadas = 0;
@@ -215,9 +234,12 @@ async function vuelta() {
         if (await avisar(r.phone, data)) avisadas++;
       }
     } catch (e) {
+      ultimo.error = e.message;
       logger.error({ err: e.message, phone: r.phone }, "Supervisor: fallo analizando");
     }
   }
+  ultimo.analizadas = ok;
+  ultimo.avisadas = avisadas;
   logger.info({ analizadas: ok, avisadas, hoy: analisis_hoy(), modelo: modelo_actual }, "🕵️ Supervisor: vuelta completada");
 }
 

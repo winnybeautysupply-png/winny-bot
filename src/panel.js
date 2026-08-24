@@ -20,10 +20,10 @@ import db, { set_handoff, clear_handoff, is_handed_off, mark_human_reply } from 
 import { send_text, send_image } from "./whatsapp.js";
 import { find_products, get_offers, get_by_code } from "./catalog.js";
 import {
-  list_employees, create_employee, set_active, regenerate_key, find_by_key, productividad
+  list_employees, create_employee, set_active, regenerate_key, find_by_key, productividad, delete_employee
 } from "./team.js";
 import {
-  analizar, start_supervisor, supervisor_encendido, set_setting, analisis_hoy
+  analizar, start_supervisor, supervisor_encendido, set_setting, analisis_hoy, estado_supervisor
 } from "./supervisor.js";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
@@ -687,6 +687,11 @@ function vistaEquipo(key, role, nombre, notice = "") {
           <input type="hidden" name="key" value="${esc(key)}"><input type="hidden" name="id" value="${e.id}">
           <button class="ghost" type="submit" style="padding:8px 12px;font-size:.8rem">Cambiar su clave</button>
         </form>
+        ${e.activa ? "" : `<form method="post" action="/panel/equipo/borrar"
+            onsubmit="return confirm('¿Borrar la cuenta de ${esc(e.nombre)}? Sus números del pasado se conservan.')">
+          <input type="hidden" name="key" value="${esc(key)}"><input type="hidden" name="id" value="${e.id}">
+          <button class="grey" type="submit" style="padding:8px 12px;font-size:.8rem">Borrar</button>
+        </form>`}
       </div></div>`;
   }).join("");
 
@@ -803,6 +808,20 @@ export function mount_panel(app) {
     if (soloJefa(g, res)) return;
     const clave = regenerate_key(parseInt(req.body?.id, 10));
     res.redirect(aEquipo(g.key, "&ok=" + encodeURIComponent(clave ? "Clave nueva lista — mándale el enlace otra vez." : "No encontré esa empleada.")));
+  });
+
+  app.post("/panel/equipo/borrar", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    delete_employee(parseInt(req.body?.id, 10));
+    res.redirect(aEquipo(g.key, "&ok=" + encodeURIComponent("Cuenta borrada.")));
+  });
+
+  // ── Diagnóstico del supervisor (solo jefa) ──
+  app.get("/panel/estado", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (g.role !== "jefa") return res.status(403).json({ error: "solo la jefa" });
+    res.json(estado_supervisor());
   });
 
   // ── Interruptor del supervisor de IA (solo jefa) ──

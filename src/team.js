@@ -131,3 +131,9 @@ export function productividad(desde) {
       : null
   })).sort((a, b) => b.clientas - a.clientas);
 }
+
+// Borra la cuenta (solo se ofrece para empleadas ya desactivadas). El historial
+// NO se pierde: los mensajes guardan el nombre, no el id.
+export function delete_employee(id) {
+  db.prepare("DELETE FROM employees WHERE id = ?").run(id);
+}
