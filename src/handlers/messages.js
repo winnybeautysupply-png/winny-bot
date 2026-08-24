@@ -13,6 +13,7 @@ import {
 import {
   upsert_contact, save_message, get_recent_messages,
   set_handoff, is_handed_off, clear_handoff, mark_human_reply, mark_handoff_hold, get_handoff_state,
+  last_channel_invite, mark_channel_invite,
   get_active_order, create_order, update_order,
   get_pending_verification, get_latest_pending_verification,
   get_customer_orders, set_shipping,
@@ -1253,6 +1254,23 @@ async function handle_text(parsed, contact) {
       phone: from, direction: "out", type: "text",
       content: ai.text, wa_message_id: msg_id
     });
+  }
+
+  // ═══ Invitación DIARIA al canal de ofertas ═══════════════════
+  // Si la clienta escribió hoy y no ha recibido la invitación en las últimas 24h,
+  // se la mandamos después de la respuesta (una vez al día máximo, solo WhatsApp).
+  try {
+    if (!from.startsWith("ig:") && Date.now() - last_channel_invite(from) > 24 * 60 * 60 * 1000) {
+      const invite =
+        "Por cierto amor 💕 sígueme en mi canal de OFERTAS de WhatsApp, ahí publico primero los especiales y las novedades de Winny Beauty Supply 🛍️✨\nhttps://whatsapp.com/channel/0029VbD45yUEAKWGRrM6i73Z";
+      const inv_id = await send_text(from, invite);
+      if (inv_id) {
+        save_message({ phone: from, direction: "out", type: "text", content: invite, wa_message_id: inv_id });
+        mark_channel_invite(from);
+      }
+    }
+  } catch (e) {
+    logger.error({ err: e?.message, from }, "Fallo enviando invitación al canal");
   }
 }
 

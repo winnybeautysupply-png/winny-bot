@@ -99,6 +99,9 @@ for (const col of ["summary TEXT", "summary_at_msg INTEGER DEFAULT 0"]) {
 }
 
 // Migracion: HANDOFF con seguimiento — saber si un humano ya contesto y cuando fue el ultimo "espera un momento"
+for (const col of ["channel_invited_at INTEGER DEFAULT 0"]) {
+  try { db.exec(`ALTER TABLE contacts ADD COLUMN ${col}`); } catch { /* la columna ya existe */ }
+}
 for (const col of ["handoff_human_at INTEGER DEFAULT 0", "handoff_hold_at INTEGER DEFAULT 0"]) {
   try { db.exec(`ALTER TABLE contacts ADD COLUMN ${col}`); } catch { /* la columna ya existe */ }
 }
@@ -373,3 +376,12 @@ export function get_latest_pending_verification() {
 }
 
 export default db;
+
+// ─── Canal de ofertas: invitacion diaria a clientas que escriben ─
+export function last_channel_invite(phone) {
+  const row = db.prepare("SELECT channel_invited_at FROM contacts WHERE phone = ?").get(phone);
+  return row?.channel_invited_at || 0;
+}
+export function mark_channel_invite(phone) {
+  db.prepare("UPDATE contacts SET channel_invited_at = ? WHERE phone = ?").run(Date.now(), phone);
+}
