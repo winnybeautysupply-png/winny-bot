@@ -16,10 +16,15 @@
 // ═══════════════════════════════════════════════════════════════
 import path from "path";
 import multer from "multer";
-import Anthropic from "@anthropic-ai/sdk";
 import db, { set_handoff, clear_handoff, is_handed_off, mark_human_reply } from "./db.js";
 import { send_text, send_image } from "./whatsapp.js";
 import { find_products, get_offers, get_by_code } from "./catalog.js";
+import {
+  list_employees, create_employee, set_active, regenerate_key, find_by_key, productividad
+} from "./team.js";
+import {
+  analizar, start_supervisor, supervisor_encendido, set_setting, analisis_hoy
+} from "./supervisor.js";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
 
@@ -37,10 +42,7 @@ for (const col of [
 try { db.exec("ALTER TABLE messages ADD COLUMN source TEXT"); } catch { /* ya existe */ }
 
 const ADMIN_KEY = process.env.ADMIN_KEY || "";
-const EMPLOYEE_KEY = process.env.EMPLOYEE_KEY || "";
-const AI_MODEL = process.env.PANEL_AI_MODEL || config.claude.model;
-
-const claude = new Anthropic({ apiKey: config.claude.api_key, timeout: 40000, maxRetries: 1 });
+const EMPLOYEE_KEY = process.env.EMPLOYEE_KEY || ""; // clave compartida vieja (sigue sirviendo)
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -55,9 +57,13 @@ const upload = multer({
 });
 
 // ─── Utilidades ──────────────────────────────────────────────────
-function key_role(k) {
-  if (ADMIN_KEY && k === ADMIN_KEY) return "jefa";
-  if (EMPLOYEE_KEY && k === EMPLOYEE_KEY) return "empleada";
+// Quién es la dueña de esta clave: la jefa, una empleada con cuenta propia,
+// o la clave compartida vieja (que se mantiene para no dejar a nadie fuera).
+function quien_es(k) {
+  if (ADMIN_KEY && k === ADMIN_KEY) return { role: "jefa", nombre: "Winny" };
+  const emp = find_by_key(k);
+  if (emp) return { role: "empleada", nombre: emp.nombre, id: emp.id };
+  if (EMPLOYEE_KEY && k === EMPLOYEE_KEY) return { role: "empleada", nombre: "Empleada" };
   return null;
 }
 
@@ -110,10 +116,10 @@ function inicioDelDia() {
 }
 
 // Guarda un mensaje SALIENTE marcando que lo mandó un humano desde el panel.
-function save_out(phone, { type = "text", content = "", media_path = null, sid = null, source = "humano" }) {
-  db.prepare(`INSERT INTO messages (phone, direction, type, content, media_path, wa_message_id, timestamp, source)
-              VALUES (?, 'out', ?, ?, ?, ?, ?, ?)`)
-    .run(phone, type, content || null, media_path, sid, Date.now(), source);
+function save_out(phone, { type = "text", content = "", media_path = null, sid = null, source = "humano", agent = null }) {
+  db.prepare(`INSERT INTO messages (phone, direction, type, content, media_path, wa_message_id, timestamp, source, agent)
+              VALUES (?, 'out', ?, ?, ?, ?, ?, ?, ?)`)
+    .run(phone, type, content || null, media_path, sid, Date.now(), source, agent);
 }
 
 // ─── Consultas de la bandeja ─────────────────────────────────────
@@ -124,7 +130,7 @@ function inbox_rows(limit = 300) {
   const rows = db.prepare(`
     SELECT c.phone AS phone, c.name AS name, c.last_seen AS last_seen,
            c.handed_off_until AS handoff, c.tags AS tags, c.panel_ai AS panel_ai,
-           c.taken_by AS taken_by,
+           c.taken_by AS taken_by, c.assigned_to AS assigned_to,
            (SELECT m.content FROM messages m WHERE m.phone = c.phone AND m.type = 'text'
               ORDER BY m.timestamp DESC LIMIT 1) AS last_text,
            (SELECT MAX(m.timestamp) FROM messages m WHERE m.phone = c.phone AND m.direction = 'in') AS last_in,
@@ -165,7 +171,7 @@ function contar(rows) {
 // Ficha comercial de la clienta: compras, gasto, último pedido.
 function ficha(phone) {
   const c = db.prepare(`SELECT phone, name, first_seen, last_seen, summary, notes, tags,
-                               panel_ai, panel_ai_at, taken_by, handed_off_until
+                               panel_ai, panel_ai_at, taken_by, handed_off_until, assigned_to
                         FROM contacts WHERE phone = ?`).get(phone) || { phone };
   const compras = db.prepare(`
     SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS gastado
@@ -203,45 +209,15 @@ function productos_de(items) {
   return arr.map(p => `${p.cantidad || 1}× ${p.nombre}${p.detalles ? ` (${p.detalles})` : ""}`).join(", ");
 }
 
-// ─── Análisis de IA de una conversación (bajo demanda, no automático) ───
-async function analizar(phone) {
-  const msgs = db.prepare(`
-    SELECT direction, content FROM messages
-    WHERE phone = ? AND type = 'text' AND content IS NOT NULL
-    ORDER BY timestamp DESC LIMIT 30
-  `).all(phone).reverse();
-  if (!msgs.length) return null;
-
-  const convo = msgs.map(m => `${m.direction === "in" ? "CLIENTA" : "TIENDA"}: ${m.content}`).join("\n");
-  const f = ficha(phone);
-  const compras = f.compras.n
-    ? `${f.compras.n} compras, RD$${rd(f.compras.gastado)} en total`
-    : "sin compras registradas";
-
-  const resp = await claude.messages.create({
-    model: AI_MODEL,
-    max_tokens: 500,
-    temperature: 0,
-    system: "Eres la supervisora de ventas de una tienda de belleza dominicana (pelucas, cabello, productos de instalación). Lees una conversación de WhatsApp entre la tienda y una clienta y devuelves SOLO un JSON, sin texto alrededor, con estas claves exactas: resumen (string, 2 frases máximo, en español, qué quiere la clienta y en qué punto está), intencion (string corto: 'Comprar' | 'Preguntando precio' | 'Reclamo' | 'Seguimiento de pedido' | 'Solo mirando' | 'Otro'), producto (string, qué producto concreto le interesa, o '' si no está claro), probabilidad (string: 'Alta' | 'Media' | 'Baja' — probabilidad de que compre), necesita_humano (boolean: true si hay reclamo, molestia, negociación, pedido grande, problema de pago/envío, o pide hablar con una persona), motivo_humano (string corto, '' si necesita_humano es false), sugerencia (string, 1 frase: el próximo paso concreto que debe dar la tienda para cerrar la venta). No inventes datos que no estén en la conversación.",
-    messages: [{ role: "user", content: `HISTORIAL DE COMPRAS: ${compras}\n\nCONVERSACIÓN:\n${convo}\n\nDevuelve el JSON.` }]
-  });
-
-  const text = resp.content?.find(b => b.type === "text")?.text?.trim() || "";
-  const m = text.match(/\{[\s\S]*\}/);
-  if (!m) return null;
-  const data = JSON.parse(m[0]);
-  db.prepare("UPDATE contacts SET panel_ai = ?, panel_ai_at = ? WHERE phone = ?")
-    .run(JSON.stringify(data), Date.now(), phone);
-  return data;
-}
-
 // ─── HTML ────────────────────────────────────────────────────────
-function shell(title, inner, { key = "", role = "", activa = "" } = {}) {
+function shell(title, inner, { key = "", role = "", nombre = "", activa = "" } = {}) {
   const k = encodeURIComponent(key);
   const nav = key ? `
     <nav class="nav">
       <a class="${activa === "bandeja" ? "on" : ""}" href="/panel?key=${k}">📥 Bandeja</a>
+      ${role === "empleada" ? `<a class="${activa === "mias" ? "on" : ""}" href="/panel?key=${k}&f=mias">👩 Mías</a>` : ""}
       ${role === "jefa" ? `<a class="${activa === "dash" ? "on" : ""}" href="/panel/dashboard?key=${k}">📊 Números</a>` : ""}
+      ${role === "jefa" ? `<a class="${activa === "equipo" ? "on" : ""}" href="/panel/equipo?key=${k}">👥 Equipo</a>` : ""}
       ${role === "jefa" ? `<a href="/pending?key=${k}">🧾 Pedidos abiertos</a>` : ""}
     </nav>` : "";
 
@@ -316,7 +292,7 @@ form.login button{width:100%;margin-top:12px}
 .muted{color:var(--soft);font-size:.85rem}
 details summary{cursor:pointer;font-weight:700;font-size:.9rem;color:var(--pink);padding:4px 0}
 </style></head><body>
-<header><span>🌸 Winny — Centro de atención</span>${role ? `<span class="rol">${esc(role)}</span>` : ""}</header>
+<header><span>🌸 Winny — Centro de atención</span>${role ? `<span class="rol">${esc(nombre || role)}</span>` : ""}</header>
 ${nav}
 <div class="wrap">${inner}</div></body></html>`;
 }
@@ -330,13 +306,15 @@ function loginForm(msg) {
 }
 
 // ─── Vista: BANDEJA ──────────────────────────────────────────────
-function vistaBandeja(key, role, filtro) {
+function vistaBandeja(key, role, nombre, filtro) {
   const rows = inbox_rows();
   const n = contar(rows);
   const k = encodeURIComponent(key);
+  const mias = rows.filter(r => r.assigned_to && r.assigned_to === nombre).length;
 
   let lista = rows;
-  if (filtro === "pendientes") lista = rows.filter(r => r.estado === "pendiente");
+  if (filtro === "mias") lista = rows.filter(r => r.assigned_to === nombre);
+  else if (filtro === "pendientes") lista = rows.filter(r => r.estado === "pendiente");
   else if (filtro === "esperando") lista = rows.filter(r => r.estado === "esperando");
   else if (filtro === "ia") lista = rows.filter(r => r.atendida_por === "ia");
   else if (filtro === "humano") lista = rows.filter(r => r.atendida_por === "humano");
@@ -353,6 +331,7 @@ function vistaBandeja(key, role, filtro) {
     `<a class="tile ${filtro === f ? "sel" : ""}" href="/panel?key=${k}&f=${f}"><b>${num}</b><span>${txt}</span></a>`;
 
   const tiles = `<div class="tiles">
+    ${mias ? tile("mias", mias, "👩 Mías") : ""}
     ${tile("pendientes", n.pendientes, "🔴 Pendientes")}
     ${tile("esperando", n.esperando, "🟡 Esperando clienta")}
     ${tile("ia", n.ia, "🤖 Atiende Claude")}
@@ -373,7 +352,8 @@ function vistaBandeja(key, role, filtro) {
         : `<span class="pill amar">🟡 Esperando</span>`) +
       (r.atendida_por === "humano"
         ? `<span class="pill hum">👤 ${esc(r.taken_by || "humano")}</span>`
-        : `<span class="pill ia">🤖 Claude</span>`) + tags;
+        : `<span class="pill ia">🤖 Claude</span>`) +
+      (r.assigned_to && r.assigned_to !== r.taken_by ? `<span class="pill tag">👩 ${esc(r.assigned_to)}</span>` : "") + tags;
     return `<a class="item" href="/panel/chat?key=${k}&phone=${encodeURIComponent(r.phone)}">
       <span class="time">${esc(fmtTime(r.last_seen))}</span>
       <div class="n">${esc(disp)}</div>
@@ -383,11 +363,12 @@ function vistaBandeja(key, role, filtro) {
 
   return shell("Bandeja", `${tiles}
     <p class="muted">${lista.length} conversaciones${filtro && filtro !== "todas" ? " en este filtro" : ""} · las que llevan más tiempo esperando salen primero</p>
-    ${items || "<p class='muted'>Nada por aquí ✨</p>"}`, { key, role, activa: "bandeja" });
+    ${items || "<p class='muted'>Nada por aquí ✨</p>"}`,
+    { key, role, nombre, activa: filtro === "mias" ? "mias" : "bandeja" });
 }
 
 // ─── Vista: CONVERSACIÓN ─────────────────────────────────────────
-function vistaChat(phone, key, role, { notice = "", productos = null, q = "" } = {}) {
+function vistaChat(phone, key, role, nombre, { notice = "", productos = null, q = "" } = {}) {
   const f = ficha(phone);
   const disp = prettyName(phone, f.c.name);
   const k = encodeURIComponent(key);
@@ -427,6 +408,7 @@ function vistaChat(phone, key, role, { notice = "", productos = null, q = "" } =
       </div>
       ${ai.necesita_humano ? `<p class="notice err" style="margin-top:9px">🚨 Requiere humano: ${esc(ai.motivo_humano || "revisar")}</p>` : ""}
       ${ai.sugerencia ? `<p class="notice" style="margin-top:9px">💡 ${esc(ai.sugerencia)}</p>` : ""}
+      ${ai.consejo_equipo ? `<p class="notice" style="margin-top:9px;background:#fff6e0;border-color:#f3e2b3;color:#7a5a00">🕵️ Consejo: ${esc(ai.consejo_equipo)}</p>` : ""}
       <p class="muted" style="margin:8px 0 0">Analizado ${esc(hace(f.c.panel_ai_at))}</p>`
       : `<p class="muted">Todavía no se ha analizado esta conversación.</p>`}
     <form method="post" action="/panel/analizar">
@@ -479,9 +461,24 @@ function vistaChat(phone, key, role, { notice = "", productos = null, q = "" } =
   ${f.c.summary ? `<div class="card"><h3>🧠 Ficha que recuerda el bot</h3>
     <div class="muted" style="white-space:pre-wrap">${esc(f.c.summary)}</div></div>` : ""}`;
 
+  // ── A quién le toca esta clienta ──
+  const equipo = list_employees(false);
+  const asignada = f.c.assigned_to || "";
+  const asignar = `<form method="post" action="/panel/asignar" style="margin-top:10px">
+      <input type="hidden" name="key" value="${esc(key)}"><input type="hidden" name="phone" value="${esc(phone)}">
+      <div class="row">
+        <select name="quien" style="flex:1;min-width:140px;padding:9px;border-radius:10px;border:1px solid #ccd0d6">
+          <option value="">— sin asignar —</option>
+          ${["Winny", ...equipo.map(e => e.nombre)].map(nm =>
+            `<option value="${esc(nm)}" ${asignada === nm ? "selected" : ""}>${esc(nm)}</option>`).join("")}
+        </select>
+        <button class="ghost" type="submit">Asignar</button>
+      </div></form>`;
+
   // ── Control IA / humano ──
   const control = esIG ? "" : `<div class="card">
     <h3>Quién atiende</h3>
+    ${asignada ? `<p class="muted" style="margin:0 0 8px">👩 Asignada a <b>${esc(asignada)}</b></p>` : ""}
     ${pausado
       ? `<p class="notice">👤 <b>${esc(f.c.taken_by || "Humano")}</b> está atendiendo. Claude está en pausa con esta clienta.</p>
          <form method="post" action="/panel/devolver">
@@ -492,6 +489,7 @@ function vistaChat(phone, key, role, { notice = "", productos = null, q = "" } =
            <input type="hidden" name="key" value="${esc(key)}"><input type="hidden" name="phone" value="${esc(phone)}">
            <button class="big" type="submit">👤 TOMAR CONVERSACIÓN</button></form>
          <p class="muted" style="margin:6px 0 0">Pausa a Claude 2 horas para que no respondan los dos a la vez.</p>`}
+    ${asignar}
   </div>`;
 
   // ── Catálogo rápido ──
@@ -548,11 +546,11 @@ function vistaChat(phone, key, role, { notice = "", productos = null, q = "" } =
         ${catalogo}
       </div>
       <div>${aiCard}${fichaCard}</div>
-    </div>`, { key, role, activa: "bandeja" });
+    </div>`, { key, role, nombre, activa: "bandeja" });
 }
 
 // ─── Vista: DASHBOARD (solo jefa) ────────────────────────────────
-function vistaDashboard(key, role) {
+function vistaDashboard(key, role, nombre) {
   const desde = inicioDelDia();
   const owner = ownerDigits();
   const noOwner = `AND replace(replace(phone,'whatsapp:',''),'+','') != '${owner}'`;
@@ -608,9 +606,106 @@ function vistaDashboard(key, role) {
       ${t(porEnviar, "📦 Pedidos por enviar")}
       ${t(n.humano, "👤 En manos humanas")}
     </div>
+    <h3 style="margin:16px 0 8px">👥 Quién trabajó hoy</h3>
+    ${tablaProductividad(desde)}
+    ${bloqueSupervisor(key)}
     ${urgentes ? `<h3 style="margin:16px 0 8px">⏱️ Llevan más tiempo esperando</h3>${urgentes}` : ""}
     <p class="muted" style="margin-top:14px">Los números son de hoy en horario de Santo Domingo. «Atendió Claude» / «Atendió humano» cuenta clientas distintas, no mensajes.</p>
-  `, { key, role, activa: "dash" });
+  `, { key, role, nombre, activa: "dash" });
+}
+
+// Tabla de productividad: cada persona (y Claude) con lo que hizo en el periodo.
+function tablaProductividad(desde) {
+  const filas = productividad(desde);
+  if (!filas.length) return `<p class="muted">Todavía no hay actividad en este periodo.</p>`;
+  return `<div class="card" style="padding:0;overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:.86rem;min-width:520px">
+      <tr style="background:#faf7fa;text-align:left">
+        <th style="padding:9px 12px">Quién</th><th>Clientas</th><th>Mensajes</th>
+        <th>Respuesta</th><th>Ventas</th><th style="padding-right:12px">Monto</th></tr>
+      ${filas.map(f => `<tr style="border-top:1px solid var(--line)">
+        <td style="padding:9px 12px;font-weight:700">${esc(f.quien)}</td>
+        <td>${f.clientas}</td>
+        <td>${f.mensajes}</td>
+        <td>${f.respuesta_media_min === null ? "—" : `${f.respuesta_media_min} min`}</td>
+        <td>${f.ventas}</td>
+        <td style="padding-right:12px">RD$${rd(f.monto)}</td></tr>`).join("")}
+    </table></div>
+  <p class="muted">«Respuesta» es lo que tarda en contestarle a una clienta que está esperando. Las ventas se le atribuyen a la última persona que le escribió antes de que pagara; si nadie la tocó, son de Claude.</p>`;
+}
+
+// Interruptor del supervisor de IA + cuánto ha analizado hoy.
+function bloqueSupervisor(key) {
+  const on = supervisor_encendido();
+  const hoy = analisis_hoy();
+  return `<div class="card" style="margin-top:14px">
+    <h3>🕵️ Supervisor de IA</h3>
+    <p class="muted" style="margin:0 0 8px">
+      ${on
+        ? "Encendido: Claude revisa solo las conversaciones con movimiento y te avisa por WhatsApp cuando una clienta necesita a una persona."
+        : "Apagado: nadie está revisando las conversaciones en segundo plano."}
+    </p>
+    <div class="kv"><span>Estado</span><b>${on ? "🟢 Encendido" : "⚪ Apagado"}</b></div>
+    <div class="kv"><span>Conversaciones analizadas hoy</span><b>${hoy}</b></div>
+    <form method="post" action="/panel/supervisor">
+      <input type="hidden" name="key" value="${esc(key)}">
+      <input type="hidden" name="estado" value="${on ? "off" : "on"}">
+      <button class="${on ? "grey" : ""} big" type="submit">${on ? "Apagar supervisor" : "Encender supervisor"}</button>
+    </form>
+    <p class="muted" style="margin:8px 0 0">Cada análisis gasta créditos de Claude. Apágalo si los créditos están bajos.</p>
+  </div>`;
+}
+
+// ─── Vista: EQUIPO (solo jefa) ───────────────────────────────────
+function vistaEquipo(key, role, nombre, notice = "") {
+  const k = encodeURIComponent(key);
+  const emps = list_employees(true);
+  const desde = Date.now() - 7 * 86400000;
+  const prod = productividad(desde);
+  const dato = nm => prod.find(p => p.quien === nm) || { clientas: 0, mensajes: 0, ventas: 0, monto: 0, respuesta_media_min: null };
+
+  const filas = emps.map(e => {
+    const d = dato(e.nombre);
+    const link = `${config.public_base_url}/panel?key=${encodeURIComponent(e.clave)}`;
+    return `<div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+        <div><b style="font-size:1.05rem">${esc(e.nombre)}</b>
+          <span class="pill ${e.activa ? "hum" : "tag"}">${e.activa ? "activa" : "desactivada"}</span></div>
+      </div>
+      <div class="kv"><span>Últimos 7 días</span><b>${d.clientas} clientas · ${d.mensajes} mensajes</b></div>
+      <div class="kv"><span>Respuesta media</span><b>${d.respuesta_media_min === null ? "—" : `${d.respuesta_media_min} min`}</b></div>
+      <div class="kv"><span>Ventas atribuidas</span><b>${d.ventas} · RD$${rd(d.monto)}</b></div>
+      <p class="muted" style="margin:9px 0 4px">Su enlace personal (mándaselo por WhatsApp):</p>
+      <input type="text" readonly value="${esc(link)}" onclick="this.select()" style="font-size:.78rem">
+      <div class="row">
+        <form method="post" action="/panel/equipo/estado">
+          <input type="hidden" name="key" value="${esc(key)}"><input type="hidden" name="id" value="${e.id}">
+          <input type="hidden" name="activa" value="${e.activa ? 0 : 1}">
+          <button class="grey" type="submit" style="padding:8px 12px;font-size:.8rem">${e.activa ? "Desactivar" : "Reactivar"}</button>
+        </form>
+        <form method="post" action="/panel/equipo/clave">
+          <input type="hidden" name="key" value="${esc(key)}"><input type="hidden" name="id" value="${e.id}">
+          <button class="ghost" type="submit" style="padding:8px 12px;font-size:.8rem">Cambiar su clave</button>
+        </form>
+      </div></div>`;
+  }).join("");
+
+  return shell("Equipo", `
+    <h2 style="margin:4px 0 10px">👥 Equipo</h2>
+    ${notice}
+    <div class="card">
+      <h3>Agregar empleada</h3>
+      <form method="post" action="/panel/equipo/nueva">
+        <input type="hidden" name="key" value="${esc(key)}">
+        <input type="text" name="nombre" placeholder="Nombre de la empleada (ej: Ana)" required>
+        <button class="big" type="submit">Crear su cuenta</button>
+      </form>
+      <p class="muted" style="margin:8px 0 0">Se le genera su propio enlace. Entra con ese enlace y todo lo que responda queda a su nombre.</p>
+    </div>
+    ${filas || `<p class="muted">Todavía no hay empleadas con cuenta propia.</p>`}
+    ${EMPLOYEE_KEY ? `<p class="muted">También sigue funcionando la clave compartida vieja (aparece como «Empleada» en los números). Cuando todas tengan la suya, se puede quitar.</p>` : ""}
+    <p class="muted"><a href="/panel/dashboard?key=${k}">← Volver a los números</a></p>
+  `, { key, role, nombre, activa: "equipo" });
 }
 
 // ─── Rutas ───────────────────────────────────────────────────────
@@ -618,12 +713,21 @@ export function mount_panel(app) {
   const guard = (req, res) => {
     if (!ADMIN_KEY) { res.status(503).send("El panel no está configurado (falta ADMIN_KEY)."); return null; }
     const key = (req.query.key ?? req.body?.key ?? "").toString();
-    const role = key_role(key);
-    if (!role) {
+    const yo = quien_es(key);
+    if (!yo) {
       res.status(key ? 401 : 200).send(loginForm(key ? "Clave incorrecta" : ""));
       return null;
     }
-    return { key, role };
+    return { key, role: yo.role, nombre: yo.nombre };
+  };
+
+  const soloJefa = (g, res) => {
+    if (g.role === "jefa") return false;
+    res.status(403).send(shell("Sin acceso",
+      `<div class="card"><p>Esta sección es solo para Winny 💕</p>
+       <a href="/panel?key=${encodeURIComponent(g.key)}">← Volver a la bandeja</a></div>`,
+      { key: g.key, role: g.role, nombre: g.nombre }));
+    return true;
   };
 
   const volver = (key, phone, extra = "") =>
@@ -631,7 +735,7 @@ export function mount_panel(app) {
 
   app.get("/panel", (req, res) => {
     const g = guard(req, res); if (!g) return;
-    res.send(vistaBandeja(g.key, g.role, (req.query.f || "").toString()));
+    res.send(vistaBandeja(g.key, g.role, g.nombre, (req.query.f || "").toString()));
   });
 
   app.get("/panel/chat", async (req, res) => {
@@ -654,15 +758,70 @@ export function mount_panel(app) {
         logger.error({ err: e.message }, "Panel: error buscando en el catálogo");
       }
     }
-    res.send(vistaChat(phone, g.key, g.role, { notice, productos, q }));
+    res.send(vistaChat(phone, g.key, g.role, g.nombre, { notice, productos, q }));
   });
 
   app.get("/panel/dashboard", (req, res) => {
     const g = guard(req, res); if (!g) return;
-    if (g.role !== "jefa") return res.status(403).send(shell("Sin acceso",
-      `<div class="card"><p>Esta sección es solo para Winny 💕</p>
-       <a href="/panel?key=${encodeURIComponent(g.key)}">← Volver a la bandeja</a></div>`, { key: g.key, role: g.role }));
-    res.send(vistaDashboard(g.key, g.role));
+    if (soloJefa(g, res)) return;
+    res.send(vistaDashboard(g.key, g.role, g.nombre));
+  });
+
+  // ── EQUIPO (solo jefa) ──
+  app.get("/panel/equipo", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    let notice = "";
+    if (req.query.ok) notice = `<div class="notice">✅ ${esc(String(req.query.ok))}</div>`;
+    if (req.query.err) notice = `<div class="notice err">⚠️ ${esc(String(req.query.err))}</div>`;
+    res.send(vistaEquipo(g.key, g.role, g.nombre, notice));
+  });
+
+  const aEquipo = (key, extra = "") => `/panel/equipo?key=${encodeURIComponent(key)}${extra}`;
+
+  app.post("/panel/equipo/nueva", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    try {
+      const e = create_employee((req.body?.nombre || "").toString());
+      logger.info({ empleada: e.nombre }, "👥 Panel: empleada creada");
+      res.redirect(aEquipo(g.key, "&ok=" + encodeURIComponent(`Cuenta de ${e.nombre} creada. Cópiale su enlace.`)));
+    } catch (e) {
+      res.redirect(aEquipo(g.key, "&err=" + encodeURIComponent(e.message)));
+    }
+  });
+
+  app.post("/panel/equipo/estado", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    set_active(parseInt(req.body?.id, 10), String(req.body?.activa) === "1");
+    res.redirect(aEquipo(g.key, "&ok=" + encodeURIComponent("Listo.")));
+  });
+
+  app.post("/panel/equipo/clave", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    const clave = regenerate_key(parseInt(req.body?.id, 10));
+    res.redirect(aEquipo(g.key, "&ok=" + encodeURIComponent(clave ? "Clave nueva lista — mándale el enlace otra vez." : "No encontré esa empleada.")));
+  });
+
+  // ── Interruptor del supervisor de IA (solo jefa) ──
+  app.post("/panel/supervisor", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    const estado = String(req.body?.estado) === "on" ? "on" : "off";
+    set_setting("supervisor", estado);
+    logger.info({ estado }, "🕵️ Supervisor: interruptor cambiado desde el panel");
+    res.redirect(`/panel/dashboard?key=${encodeURIComponent(g.key)}`);
+  });
+
+  // ── Asignar la clienta a alguien del equipo ──
+  app.post("/panel/asignar", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    const phone = (req.body?.phone || "").toString();
+    const quien = (req.body?.quien || "").toString().trim();
+    db.prepare("UPDATE contacts SET assigned_to = ? WHERE phone = ?").run(quien || null, phone);
+    res.redirect(volver(g.key, phone, "&ok=" + encodeURIComponent(quien ? `Asignada a ${quien}.` : "Sin asignar.")));
   });
 
   // ── Responder ──
@@ -687,12 +846,14 @@ export function mount_panel(app) {
         type: file ? (/^video\//.test(file.mimetype) ? "video" : "image") : "text",
         content: text || "[foto/video]",
         media_path: file ? file.path : null,
-        sid
+        sid,
+        agent: g.nombre
       });
       if (pausar === "1") { set_handoff(phone, 120); mark_human_reply(phone); }
       else { clear_handoff(phone); mark_human_reply(phone); }
-      db.prepare("UPDATE contacts SET taken_by = COALESCE(taken_by, ?) WHERE phone = ?").run(g.role, phone);
-      logger.info({ phone, rol: g.role, media: !!file }, "💬 Panel v2: respuesta enviada");
+      db.prepare("UPDATE contacts SET taken_by = ?, assigned_to = COALESCE(assigned_to, ?) WHERE phone = ?")
+        .run(g.nombre, g.nombre, phone);
+      logger.info({ phone, quien: g.nombre, media: !!file }, "💬 Panel v2: respuesta enviada");
       return res.redirect(volver(g.key, phone, "&ok=" + encodeURIComponent("Mensaje enviado.")));
     } catch (e) {
       logger.error({ err: e.message, phone }, "Panel v2: error enviando");
@@ -708,8 +869,8 @@ export function mount_panel(app) {
     // un mensaje. Así, si quien la tomó se distrae, el bot le manda "ya te consulto"
     // a la clienta en vez de dejarla en visto (red de seguridad que ya existía).
     set_handoff(phone, 120);
-    db.prepare("UPDATE contacts SET taken_by = ? WHERE phone = ?").run(g.role, phone);
-    logger.info({ phone, rol: g.role }, "👤 Panel v2: conversación tomada por un humano");
+    db.prepare("UPDATE contacts SET taken_by = ?, assigned_to = ? WHERE phone = ?").run(g.nombre, g.nombre, phone);
+    logger.info({ phone, quien: g.nombre }, "👤 Panel v2: conversación tomada por un humano");
     res.redirect(volver(g.key, phone, "&ok=" + encodeURIComponent("La estás atendiendo tú. Claude no le escribirá.")));
   });
 
@@ -776,22 +937,26 @@ export function mount_panel(app) {
 
       const sid = await send_text(phone, caption);
       if (!sid) return res.redirect(volver(g.key, phone, "&err=" + encodeURIComponent("WhatsApp rechazó el envío (¿pasaron 24 h?).")));
-      save_out(phone, { type: "text", content: caption, sid });
+      save_out(phone, { type: "text", content: caption, sid, agent: g.nombre });
 
       if (raw && !esLinkDePagina) {
         try {
           const isid = await send_image(phone, raw, "");
-          if (isid) save_out(phone, { type: "image", content: `[foto ${p.nombre}]`, sid: isid });
+          if (isid) save_out(phone, { type: "image", content: `[foto ${p.nombre}]`, sid: isid, agent: g.nombre });
         } catch { /* la foto es un extra: el precio ya llegó por texto */ }
       }
       mark_human_reply(phone);
-      logger.info({ phone, producto: p.nombre, rol: g.role }, "🛍️ Panel v2: producto enviado");
+      logger.info({ phone, producto: p.nombre, quien: g.nombre }, "🛍️ Panel v2: producto enviado");
       return res.redirect(volver(g.key, phone, "&ok=" + encodeURIComponent(`Enviado: ${p.nombre}`)));
     } catch (e) {
       logger.error({ err: e.message, phone }, "Panel v2: error enviando producto");
       return res.redirect(volver(g.key, phone, "&err=" + encodeURIComponent("Error: " + e.message)));
     }
   });
+
+  // El supervisor de IA vive dentro del panel: si el panel no carga, tampoco
+  // arranca él, y el bot sigue atendiendo igual.
+  start_supervisor();
 
   logger.info("🖥️  Panel v2 montado en /panel");
 }
