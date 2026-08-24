@@ -279,7 +279,7 @@ function productos_de(items) {
 }
 
 // ─── HTML ────────────────────────────────────────────────────────
-function shell(title, inner, { key = "", role = "", nombre = "", activa = "", permisos = [] } = {}) {
+function shell(title, inner, { key = "", role = "", nombre = "", activa = "", permisos = [], refresco = 0 } = {}) {
   const tiene = p => role === "jefa" || permisos.includes(p);
   const k = encodeURIComponent(key);
   const nav = key ? `
@@ -382,7 +382,34 @@ details summary{cursor:pointer;font-weight:700;font-size:.9rem;color:var(--pink)
 <header><span>🌸 Winny — Centro de atención</span>${role ? `<span class="rol">${esc(nombre || role)}</span>` : ""}</header>
 ${nav}
 <div class="wrap">${inner}</div>
-<script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/panel/sw.js').catch(function(){})}</script>
+<script>
+if('serviceWorker' in navigator){navigator.serviceWorker.register('/panel/sw.js').catch(function(){})}
+(function(){
+  // La app se refresca sola para que los mensajes nuevos aparezcan sin tener
+  // que hacer nada. PERO nunca mientras está escribiendo, ni con un menú
+  // abierto: eso le borraría lo que lleva escrito.
+  var segundos = ${refresco};
+  if (!segundos) return;
+  var t = null;
+  function ocupada(){
+    var a = document.activeElement;
+    if (a && /^(TEXTAREA|INPUT|SELECT)$/.test(a.tagName)) return true;
+    if (document.querySelectorAll("details[open]").length) return true;
+    // Si se fue para arriba a leer algo viejo, tampoco le movemos la pantalla.
+    var falta = document.documentElement.scrollHeight - window.scrollY - window.innerHeight;
+    return falta > 250;
+  }
+  function programar(){
+    clearTimeout(t);
+    t = setTimeout(function(){
+      if (document.hidden || ocupada()) { programar(); return; }
+      location.reload();
+    }, segundos * 1000);
+  }
+  document.addEventListener("visibilitychange", programar);
+  programar();
+})();
+</script>
 </body></html>`;
 }
 
@@ -401,6 +428,13 @@ function vistaBandeja(key, role, nombre, filtro, buscar = "", permisos = []) {
   const k = encodeURIComponent(key);
   const mias = rows.filter(r => r.assigned_to && r.assigned_to === nombre).length;
   const conApartado = phones_con_apartado();
+  // Las que respondieron la campaña: son las más calientes del día y no se
+  // pueden quedar perdidas entre 300 conversaciones.
+  let respondieronCampana = new Set();
+  try {
+    const ca = campana_activa();
+    if (ca) respondieronCampana = new Set(respondieron_lista(ca.id).map(x => x.phone));
+  } catch { /* sin campaña */ }
 
   let lista = rows;
   if (buscar) {
@@ -410,6 +444,7 @@ function vistaBandeja(key, role, nombre, filtro, buscar = "", permisos = []) {
       (r.phone || "").includes(b.replace(/\D/g, "")) ||
       (r.last_text || "").toLowerCase().includes(b));
   }
+  else if (filtro === "campana") lista = rows.filter(r => respondieronCampana.has(r.phone));
   else if (filtro === "mias") lista = rows.filter(r => r.assigned_to === nombre);
   else if (filtro === "pendientes") lista = rows.filter(r => r.estado === "pendiente");
   else if (filtro === "esperando") lista = rows.filter(r => r.estado === "esperando");
@@ -428,6 +463,7 @@ function vistaBandeja(key, role, nombre, filtro, buscar = "", permisos = []) {
     `<a class="tile ${filtro === f ? "sel" : ""}" href="/panel?key=${k}&f=${f}"><b>${num}</b><span>${txt}</span></a>`;
 
   const tiles = `<div class="tiles">
+    ${respondieronCampana.size ? tile("campana", respondieronCampana.size, "💬 Respondieron campaña") : ""}
     ${mias ? tile("mias", mias, "👩 Mías") : ""}
     ${tile("pendientes", n.pendientes, "🔴 Pendientes")}
     ${tile("esperando", n.esperando, "🟡 Esperando clienta")}
@@ -451,6 +487,7 @@ function vistaBandeja(key, role, nombre, filtro, buscar = "", permisos = []) {
         ? `<span class="pill hum">👤 ${esc(r.taken_by || "humano")}</span>`
         : `<span class="pill ia">🤖 Claude</span>`) +
       (r.assigned_to && r.assigned_to !== r.taken_by ? `<span class="pill tag">👩 ${esc(r.assigned_to)}</span>` : "") +
+      (respondieronCampana.has(r.phone) ? `<span class="pill hum">💬 Respondió la campaña</span>` : "") +
       (esCumpleHoy(r.cumple) ? `<span class="pill amar">🎂 Cumple hoy</span>` : "") +
       (conApartado.has(r.phone)
         ? `<span class="pill ${conApartado.get(r.phone).vencido ? "urg" : "amar"}">🔖 ${conApartado.get(r.phone).vencido ? "Apartado vencido" : `Apartado: faltan RD$${rd(conApartado.get(r.phone).balance)}`}</span>`
@@ -472,7 +509,7 @@ function vistaBandeja(key, role, nombre, filtro, buscar = "", permisos = []) {
   return shell("Bandeja", `${buscador}${buscar ? "" : tiles}
     <p class="muted">${lista.length} conversaciones${buscar ? ` con «${esc(buscar)}»` : (filtro && filtro !== "todas" ? " en este filtro" : "")}${buscar ? "" : " · las que llevan más tiempo esperando salen primero"}</p>
     ${items || "<p class='muted'>Nada por aquí ✨</p>"}`,
-    { key, role, nombre, permisos, activa: filtro === "mias" ? "mias" : "bandeja" });
+    { key, role, nombre, permisos, refresco: 30, activa: filtro === "mias" ? "mias" : (filtro === "campana" ? "bandeja" : "bandeja") });
 }
 
 // ─── Vista: CONVERSACIÓN ─────────────────────────────────────────
@@ -710,7 +747,7 @@ function vistaChat(phone, key, role, nombre, { notice = "", productos = null, q 
       var fin = document.getElementById("fin");
       if (fin && !${buscar ? "true" : "false"}) fin.scrollIntoView({ block: "end" });
     })();
-    </script>`, { key, role, nombre, permisos, activa: "bandeja" });
+    </script>`, { key, role, nombre, permisos, refresco: 25, activa: "bandeja" });
 }
 
 // ─── Apartados de una clienta (dentro del chat) ──────────────────
@@ -1556,6 +1593,16 @@ function vistaEquipo(key, role, nombre, notice = "") {
 
 // ─── Rutas ───────────────────────────────────────────────────────
 export function mount_panel(app) {
+  // Nada del panel se guarda en caché: si la clienta escribió hace 10 segundos,
+  // eso tiene que verse AHORA, no una versión vieja guardada por el navegador.
+  app.use("/panel", (req, res, next) => {
+    if (!/\.(js|jpg|png|webmanifest)$/.test(req.path)) {
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+      res.setHeader("Pragma", "no-cache");
+    }
+    next();
+  });
+
   const guard = (req, res) => {
     if (!ADMIN_KEY) { res.status(503).send("El panel no está configurado (falta ADMIN_KEY)."); return null; }
     const explicita = (req.query.key ?? req.body?.key ?? "").toString();
@@ -1620,7 +1667,7 @@ export function mount_panel(app) {
   // Service worker: NO cachea las páginas (los datos tienen que estar al día).
   // Solo guarda el ícono y muestra un aviso decente cuando no hay internet.
   app.get("/panel/sw.js", (_req, res) => {
-    res.type("application/javascript").send(`const CACHE = "winny-panel-v1";
+    res.type("application/javascript").send(`const CACHE = "winny-panel-v2";
 const ESTATICOS = ["/panel/icono.jpg", "/panel/manifest.webmanifest"];
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ESTATICOS)).then(() => self.skipWaiting()));
