@@ -35,7 +35,9 @@ import {
 } from "./apartados.js";
 import {
   METODOS, categorias, set_categorias, registrar_venta, anular_venta,
-  ventas_del_dia, cuadre, borrar_venta_anulada
+  ventas_del_dia, cuadre, borrar_venta_anulada,
+  CATEGORIAS_GASTO, registrar_gasto, borrar_gasto, gastos_del_dia, total_gastos,
+  efectivo_esperado, cierre_de_hoy, cerrar_caja, cierres_recientes
 } from "./ventas.js";
 import {
   audiencia, crear_campana, campana_activa, listar_campanas, conteo,
@@ -986,6 +988,9 @@ function vistaCaja(key, role, nombre, notice = "") {
 
     <h3 style="margin:18px 0 8px">Ventas de hoy</h3>
     ${lista || `<p class="muted">Todavía no se ha cobrado nada hoy.</p>`}
+
+    ${bloqueGastos(key, role)}
+    ${bloqueCierre(key, role)}
     ${role === "jefa" ? `<div class="card" style="margin-top:14px">
       <h3>⚙️ Botones de producto</h3>
       <form method="post" action="/panel/caja/categorias">
@@ -1051,6 +1056,88 @@ function vistaCaja(key, role, nombre, notice = "") {
     })();
     </script>
   `, { key, role, nombre, activa: "caja" });
+}
+
+// ─── Gastos del día (dentro de la caja) ──────────────────────────
+function bloqueGastos(key, role) {
+  const gastos = gastos_del_dia();
+  const total = total_gastos();
+  const filas = gastos.map(gg => `<div class="kv">
+      <span>${esc(fmtTime(gg.ts).split(", ")[1] || "")} · ${esc(gg.categoria || "Otro")}${gg.nota ? ` — ${esc(gg.nota)}` : ""}${gg.quien ? ` · ${esc(gg.quien)}` : ""}</span>
+      <b>RD$${rd(gg.monto)}
+        ${role === "jefa" ? `<form method="post" action="/panel/caja/gasto/borrar" style="display:inline">
+          <input type="hidden" name="key" value="${esc(key)}"><input type="hidden" name="id" value="${gg.id}">
+          <button class="grey" type="submit" style="padding:2px 7px;font-size:.7rem;margin-left:6px">✕</button></form>` : ""}
+      </b></div>`).join("");
+
+  return `<div class="card" style="margin-top:18px">
+    <h3>💸 Gastos de hoy — RD$${rd(total)}</h3>
+    ${filas || `<p class="muted">No se ha registrado ningún gasto hoy.</p>`}
+    <details style="margin-top:9px">
+      <summary>➖ Anotar un gasto</summary>
+      <form method="post" action="/panel/caja/gasto" style="margin-top:8px">
+        <input type="hidden" name="key" value="${esc(key)}">
+        <div class="row">
+          <input type="text" name="monto" inputmode="numeric" placeholder="Monto RD$" required style="flex:1;min-width:110px">
+          <select name="categoria" style="flex:1;min-width:130px;padding:10px;border-radius:10px;border:1px solid #ccd0d6">
+            ${CATEGORIAS_GASTO.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="row">
+          <select name="metodo" style="flex:1;min-width:130px;padding:10px;border-radius:10px;border:1px solid #ccd0d6">
+            ${METODOS.map(m => `<option value="${esc(m.id)}">${m.emoji} ${esc(m.label)}</option>`).join("")}
+          </select>
+          <input type="text" name="nota" placeholder="¿De qué fue?" style="flex:2;min-width:130px">
+        </div>
+        <button class="ghost big" type="submit">Guardar gasto</button>
+      </form>
+      <p class="muted" style="margin:8px 0 0">Solo el gasto en <b>efectivo</b> sale de la gaveta. Lo de tarjeta o transferencia se anota igual, pero no afecta el conteo.</p>
+    </details>
+  </div>`;
+}
+
+// ─── Cierre de caja ──────────────────────────────────────────────
+function bloqueCierre(key, role) {
+  const cerrado = cierre_de_hoy();
+  const esperado = efectivo_esperado();
+  const c = cuadre();
+  const gastos = total_gastos();
+
+  if (cerrado) {
+    const dif = Number(cerrado.diferencia) || 0;
+    const color = Math.abs(dif) < 1 ? "#1e6b32" : "#b3261e";
+    return `<div class="card" style="margin-top:14px">
+      <h3>🔒 Caja cerrada</h3>
+      <div class="kv"><span>Efectivo que debía haber</span><b>RD$${rd(cerrado.efectivo_esperado)}</b></div>
+      <div class="kv"><span>Efectivo contado</span><b>RD$${rd(cerrado.efectivo_contado)}</b></div>
+      <div class="kv"><span>Diferencia</span><b style="color:${color}">${dif > 0 ? "+" : ""}RD$${rd(dif)}</b></div>
+      <div class="kv"><span>Ventas del día</span><b>RD$${rd(cerrado.total_ventas)}</b></div>
+      <div class="kv"><span>Gastos del día</span><b>RD$${rd(cerrado.total_gastos)}</b></div>
+      <p class="muted" style="margin-top:8px">Cerrada por ${esc(cerrado.quien || "—")} a las ${esc(fmtTime(cerrado.ts).split(", ")[1] || "")}.
+        ${Math.abs(dif) < 1 ? "Cuadró perfecto 💚" : dif > 0 ? "Sobró dinero en la gaveta." : "Faltó dinero en la gaveta."}</p>
+    </div>`;
+  }
+
+  return `<div class="card" style="margin-top:14px">
+    <h3>🔒 Cerrar la caja</h3>
+    <div class="kv"><span>💵 Entró en efectivo</span><b>RD$${rd(c.por_metodo.efectivo.total)}</b></div>
+    <div class="kv"><span>💸 Salió en efectivo</span><b>− RD$${rd(c.por_metodo.efectivo.total - esperado)}</b></div>
+    <div class="kv"><span><b>Debería haber en la gaveta</b></span><b>RD$${rd(esperado)}</b></div>
+    <form method="post" action="/panel/caja/cerrar" style="margin-top:10px"
+          onsubmit="return confirm('¿Cerrar la caja del día con lo que contaste?')">
+      <input type="hidden" name="key" value="${esc(key)}">
+      <input type="text" name="contado" inputmode="numeric" placeholder="¿Cuánto efectivo contaste? RD$" required>
+      <button class="big" type="submit">Cerrar caja del día</button>
+    </form>
+    <p class="muted" style="margin:8px 0 0">Cuenta el efectivo de la gaveta y escríbelo. El sistema te dice si falta o sobra.</p>
+    ${role === "jefa" ? (() => {
+      const previos = cierres_recientes(7).filter(x => x.dia !== inicioDelDia());
+      return previos.length ? `<details style="margin-top:10px"><summary>Cierres anteriores</summary>
+        ${previos.map(x => `<div class="kv"><span>${esc(fechaCorta(x.dia))}</span>
+          <b>RD$${rd(x.total_ventas)} ${Math.abs(x.diferencia) < 1 ? "✅" : (x.diferencia > 0 ? "▲" : "▼") + " RD$" + rd(Math.abs(x.diferencia))}</b></div>`).join("")}
+      </details>` : "";
+    })() : ""}
+  </div>`;
 }
 
 // ─── Vista: PEDIDOS (solo jefa) ──────────────────────────────────
@@ -1226,6 +1313,7 @@ function vistaDashboard(key, role, nombre) {
   const n = contar(rows);
   const ap = resumen_apartados();
   const caja = cuadre();
+  const gastosHoy = total_gastos();
   const conv = convos ? Math.round(((pedidosHoy.n || 0) / convos) * 100) : 0;
 
   const t = (num, txt) => `<div class="tile"><b>${num}</b><span>${txt}</span></div>`;
@@ -1265,6 +1353,8 @@ function vistaDashboard(key, role, nombre) {
       ${t("RD$" + rd(caja.total), "Total mostrador")}
       ${METODOS.map(m => t("RD$" + rd(caja.por_metodo[m.id].total), m.emoji + " " + m.label)).join("")}
       ${t(caja.cantidad, "🧾 Ventas")}
+      ${t("RD$" + rd(gastosHoy), "💸 Gastos")}
+      ${t("RD$" + rd(caja.total - gastosHoy), "📈 Entró menos salió")}
     </div>
     <h3 style="margin:16px 0 8px">🔖 Apartados</h3>
     <div class="tiles">
@@ -1704,6 +1794,50 @@ self.addEventListener("fetch", e => {
     const g = guard(req, res); if (!g) return;
     anular_venta(parseInt(req.body?.id, 10), g.nombre);
     res.redirect(`/panel/caja?key=${encodeURIComponent(g.key)}&ok=` + encodeURIComponent("Venta anulada."));
+  });
+
+  app.post("/panel/caja/gasto", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    const b = req.body || {};
+    const atras = `/panel/caja?key=${encodeURIComponent(g.key)}`;
+    try {
+      registrar_gasto({
+        monto: Number(String(b.monto ?? "").replace(/[^\d]/g, "")),
+        categoria: (b.categoria || "Otro").toString().slice(0, 40),
+        metodo: (b.metodo || "efectivo").toString(),
+        nota: (b.nota || "").toString().trim().slice(0, 200) || null,
+        quien: g.nombre
+      });
+      res.redirect(atras + "&ok=" + encodeURIComponent("Gasto anotado."));
+    } catch (e) {
+      res.redirect(atras + "&err=" + encodeURIComponent(e.message));
+    }
+  });
+
+  app.post("/panel/caja/gasto/borrar", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    borrar_gasto(parseInt(req.body?.id, 10));
+    res.redirect(`/panel/caja?key=${encodeURIComponent(g.key)}&ok=` + encodeURIComponent("Gasto borrado."));
+  });
+
+  app.post("/panel/caja/cerrar", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    const atras = `/panel/caja?key=${encodeURIComponent(g.key)}`;
+    try {
+      const r = cerrar_caja({
+        efectivo_contado: Number(String(req.body?.contado ?? "").replace(/[^\d]/g, "")),
+        quien: g.nombre
+      });
+      const msg = Math.abs(r.diferencia) < 1
+        ? "Caja cerrada y cuadró perfecto 💚"
+        : r.diferencia > 0
+          ? `Caja cerrada. Sobraron RD$${rd(r.diferencia)} en la gaveta.`
+          : `Caja cerrada. Faltaron RD$${rd(Math.abs(r.diferencia))} en la gaveta.`;
+      res.redirect(atras + "&ok=" + encodeURIComponent(msg));
+    } catch (e) {
+      res.redirect(atras + "&err=" + encodeURIComponent(e.message));
+    }
   });
 
   app.post("/panel/caja/borrar", (req, res) => {

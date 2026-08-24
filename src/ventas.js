@@ -112,3 +112,91 @@ export function cuadre(desde = inicio_del_dia(), hasta = null) {
 export function borrar_venta_anulada(id) {
   db.prepare("DELETE FROM sales WHERE id = ? AND anulada = 1").run(id);
 }
+
+// ═══════════════════════════════════════════════════════════════
+// GASTOS Y CIERRE DE CAJA
+//
+// La caja sola solo cuenta lo que entra. Sin los gastos no hay
+// ganancia real, y sin el cierre nadie sabe si el efectivo que hay
+// en la gaveta es el que debería haber.
+// ═══════════════════════════════════════════════════════════════
+db.exec(`
+  CREATE TABLE IF NOT EXISTS expenses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    monto REAL NOT NULL,
+    categoria TEXT,
+    metodo TEXT,
+    nota TEXT,
+    quien TEXT,
+    ts INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_expenses_ts ON expenses(ts);
+
+  CREATE TABLE IF NOT EXISTS cash_closes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dia INTEGER NOT NULL,
+    efectivo_contado REAL NOT NULL,
+    efectivo_esperado REAL NOT NULL,
+    diferencia REAL NOT NULL,
+    total_ventas REAL NOT NULL,
+    total_gastos REAL NOT NULL,
+    detalle TEXT,
+    quien TEXT,
+    ts INTEGER NOT NULL
+  );
+`);
+
+export const CATEGORIAS_GASTO = ["Mercancía", "Sueldo", "Alquiler", "Transporte", "Servicios", "Comida", "Otro"];
+
+export function registrar_gasto({ monto, categoria = null, metodo = "efectivo", nota = null, quien = null }) {
+  const m = Number(monto);
+  if (!Number.isFinite(m) || m <= 0) throw new Error("Falta el monto del gasto.");
+  db.prepare("INSERT INTO expenses (monto, categoria, metodo, nota, quien, ts) VALUES (?,?,?,?,?,?)")
+    .run(m, categoria, metodo, nota, quien, Date.now());
+  logger.info({ monto: m, categoria, quien }, "💸 Gasto registrado");
+}
+
+export function borrar_gasto(id) {
+  db.prepare("DELETE FROM expenses WHERE id = ?").run(id);
+}
+
+export function gastos_del_dia(desde = inicio_del_dia()) {
+  return db.prepare("SELECT * FROM expenses WHERE ts >= ? ORDER BY ts DESC").all(desde);
+}
+
+export function total_gastos(desde = inicio_del_dia()) {
+  return db.prepare("SELECT COALESCE(SUM(monto),0) AS s FROM expenses WHERE ts >= ?").get(desde)?.s || 0;
+}
+
+// Lo que DEBERÍA haber en efectivo: lo que entró en efectivo menos lo que se
+// pagó en efectivo. Tarjeta y transferencia no tocan la gaveta.
+export function efectivo_esperado(desde = inicio_del_dia()) {
+  const entra = cuadre(desde).por_metodo.efectivo.total;
+  const sale = db.prepare("SELECT COALESCE(SUM(monto),0) AS s FROM expenses WHERE ts >= ? AND metodo = 'efectivo'")
+    .get(desde)?.s || 0;
+  return entra - sale;
+}
+
+export function cierre_de_hoy() {
+  return db.prepare("SELECT * FROM cash_closes WHERE dia = ? ORDER BY ts DESC LIMIT 1").get(inicio_del_dia()) || null;
+}
+
+export function cerrar_caja({ efectivo_contado, quien = null }) {
+  const contado = Number(efectivo_contado);
+  if (!Number.isFinite(contado) || contado < 0) throw new Error("Escribe cuánto efectivo contaste.");
+  const desde = inicio_del_dia();
+  const c = cuadre(desde);
+  const esperado = efectivo_esperado(desde);
+  const gastos = total_gastos(desde);
+  db.prepare(`INSERT INTO cash_closes
+    (dia, efectivo_contado, efectivo_esperado, diferencia, total_ventas, total_gastos, detalle, quien, ts)
+    VALUES (?,?,?,?,?,?,?,?,?)`)
+    .run(desde, contado, esperado, contado - esperado, c.total, gastos,
+         JSON.stringify(c.por_metodo), quien, Date.now());
+  logger.info({ contado, esperado, diferencia: contado - esperado, quien }, "🔒 Caja cerrada");
+  return { contado, esperado, diferencia: contado - esperado, ventas: c.total, gastos };
+}
+
+export function cierres_recientes(limite = 14) {
+  return db.prepare("SELECT * FROM cash_closes ORDER BY dia DESC LIMIT ?").all(limite);
+}
