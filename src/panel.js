@@ -42,7 +42,7 @@ import {
 } from "./ventas.js";
 import {
   audiencia, crear_campana, campana_activa, listar_campanas, conteo,
-  cambiar_estado_campana, start_campaign_poller, enviar_prueba
+  cambiar_estado_campana, start_campaign_poller, enviar_prueba, respondieron_lista
 } from "./campanas.js";
 import {
   TABLAS, exportar_csv, copiar_base, conteos, respaldos_guardados,
@@ -905,7 +905,17 @@ function vistaCampanas(key, role, nombre, notice = "") {
       <p class="muted" style="margin:9px 0 0">Sale de 9am a 8pm, con 12 segundos entre cada mensaje. Las que respondan caen solitas en tu bandeja y las atiende Claude.</p>
       <p class="muted">📲 Todos los días a las 8pm te aviso por WhatsApp cómo va: cuántas salieron, cuántas te respondieron y si eso es bueno o malo.</p>
       ${formPrueba(key)}
-    </div>`;
+    </div>
+    ${(() => {
+      const r = respondieron_lista(activa.id);
+      if (!r.length) return "";
+      return `<h3 style="margin:18px 0 8px">💬 Te respondieron (${r.length})</h3>
+        <p class="muted" style="margin:0 0 6px">Estas son las que hay que atender. Tócalas para abrir su chat.</p>
+        ${r.map(x => `<a class="item" href="/panel/chat?key=${k}&phone=${encodeURIComponent(x.phone)}">
+          <span class="time">${esc(hace(x.cuando))}</span>
+          <div class="n">${esc(x.nombre || x.phone)}</div>
+          <div class="p">${esc((x.respuesta || "(mandó una foto o un audio)").replace(/\s+/g, " ").slice(0, 80))}</div></a>`).join("")}`;
+    })()}`;
   })() : "";
 
   const historialHtml = historial.map(c => `<div class="item">

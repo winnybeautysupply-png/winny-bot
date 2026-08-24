@@ -280,3 +280,21 @@ export async function avisar_final(c) {
     logger.error({ err: e.message }, "No pude avisar del fin de la campaña");
   }
 }
+
+// Quiénes respondieron: lo único que de verdad importa de una campaña.
+export function respondieron_lista(id) {
+  return db.prepare(`
+    SELECT t.phone AS phone, COALESCE(c.name, t.nombre) AS nombre, t.sent_at AS enviado,
+           (SELECT m.content FROM messages m
+             WHERE m.phone = t.phone AND m.direction = 'in' AND m.type = 'text'
+               AND m.timestamp > t.sent_at
+             ORDER BY m.timestamp ASC LIMIT 1) AS respuesta,
+           (SELECT MIN(m.timestamp) FROM messages m
+             WHERE m.phone = t.phone AND m.direction = 'in' AND m.timestamp > t.sent_at) AS cuando
+    FROM campaign_targets t
+    LEFT JOIN contacts c ON c.phone = t.phone
+    WHERE t.campaign_id = ? AND t.estado = 'enviado' AND EXISTS (
+      SELECT 1 FROM messages m WHERE m.phone = t.phone AND m.direction = 'in' AND m.timestamp > t.sent_at)
+    ORDER BY cuando DESC
+  `).all(id);
+}
