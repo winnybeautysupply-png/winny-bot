@@ -23,7 +23,8 @@ import db, {
 import { send_text, send_image } from "./whatsapp.js";
 import { find_products, get_offers, get_by_code } from "./catalog.js";
 import {
-  list_employees, create_employee, set_active, regenerate_key, find_by_key, productividad, delete_employee
+  list_employees, create_employee, set_active, regenerate_key, find_by_key, productividad, delete_employee,
+  PERMISOS, set_permisos
 } from "./team.js";
 import {
   analizar, start_supervisor, supervisor_encendido, set_setting, analisis_hoy, estado_supervisor
@@ -83,11 +84,19 @@ const upload = multer({
 // Quién es la dueña de esta clave: la jefa, una empleada con cuenta propia,
 // o la clave compartida vieja (que se mantiene para no dejar a nadie fuera).
 function quien_es(k) {
-  if (ADMIN_KEY && k === ADMIN_KEY) return { role: "jefa", nombre: "Winny" };
+  if (ADMIN_KEY && k === ADMIN_KEY) return { role: "jefa", nombre: "Winny", permisos: ["caja", "apartados"] };
   const emp = find_by_key(k);
-  if (emp) return { role: "empleada", nombre: emp.nombre, id: emp.id };
-  if (EMPLOYEE_KEY && k === EMPLOYEE_KEY) return { role: "empleada", nombre: "Empleada" };
+  if (emp) return {
+    role: "empleada", nombre: emp.nombre, id: emp.id,
+    permisos: String(emp.permisos || "").split(",").map(s => s.trim()).filter(Boolean)
+  };
+  if (EMPLOYEE_KEY && k === EMPLOYEE_KEY) return { role: "empleada", nombre: "Empleada", permisos: ["caja", "apartados"] };
   return null;
+}
+
+// ¿Esta persona puede entrar aquí? La jefa siempre; la empleada solo si se lo dieron.
+function puede(g, permiso) {
+  return g.role === "jefa" || (g.permisos || []).includes(permiso);
 }
 
 // ─── Sesión con cookie ───────────────────────────────────────────
@@ -270,14 +279,15 @@ function productos_de(items) {
 }
 
 // ─── HTML ────────────────────────────────────────────────────────
-function shell(title, inner, { key = "", role = "", nombre = "", activa = "" } = {}) {
+function shell(title, inner, { key = "", role = "", nombre = "", activa = "", permisos = [] } = {}) {
+  const tiene = p => role === "jefa" || permisos.includes(p);
   const k = encodeURIComponent(key);
   const nav = key ? `
     <nav class="nav">
       <a class="${activa === "bandeja" ? "on" : ""}" href="/panel?key=${k}">📥 Bandeja</a>
       ${role === "empleada" ? `<a class="${activa === "mias" ? "on" : ""}" href="/panel?key=${k}&f=mias">👩 Mías</a>` : ""}
-      <a class="${activa === "caja" ? "on" : ""}" href="/panel/caja?key=${k}">🧾 Caja</a>
-      <a class="${activa === "apartados" ? "on" : ""}" href="/panel/apartados?key=${k}">🔖 Apartados</a>
+      ${tiene("caja") ? `<a class="${activa === "caja" ? "on" : ""}" href="/panel/caja?key=${k}">🧾 Caja</a>` : ""}
+      ${tiene("apartados") ? `<a class="${activa === "apartados" ? "on" : ""}" href="/panel/apartados?key=${k}">🔖 Apartados</a>` : ""}
       ${role === "jefa" ? `<a class="${activa === "dash" ? "on" : ""}" href="/panel/dashboard?key=${k}">📊 Números</a>` : ""}
       ${role === "jefa" ? `<a class="${activa === "campanas" ? "on" : ""}" href="/panel/campanas?key=${k}">📣 Campañas</a>` : ""}
       ${role === "jefa" ? `<a class="${activa === "equipo" ? "on" : ""}" href="/panel/equipo?key=${k}">👥 Equipo</a>` : ""}
@@ -385,7 +395,7 @@ function loginForm(msg) {
 }
 
 // ─── Vista: BANDEJA ──────────────────────────────────────────────
-function vistaBandeja(key, role, nombre, filtro, buscar = "") {
+function vistaBandeja(key, role, nombre, filtro, buscar = "", permisos = []) {
   const rows = inbox_rows();
   const n = contar(rows);
   const k = encodeURIComponent(key);
@@ -462,7 +472,7 @@ function vistaBandeja(key, role, nombre, filtro, buscar = "") {
   return shell("Bandeja", `${buscador}${buscar ? "" : tiles}
     <p class="muted">${lista.length} conversaciones${buscar ? ` con «${esc(buscar)}»` : (filtro && filtro !== "todas" ? " en este filtro" : "")}${buscar ? "" : " · las que llevan más tiempo esperando salen primero"}</p>
     ${items || "<p class='muted'>Nada por aquí ✨</p>"}`,
-    { key, role, nombre, activa: filtro === "mias" ? "mias" : "bandeja" });
+    { key, role, nombre, permisos, activa: filtro === "mias" ? "mias" : "bandeja" });
 }
 
 // ─── Vista: CONVERSACIÓN ─────────────────────────────────────────
@@ -477,7 +487,7 @@ function diaEtiqueta(ts) {
   } catch { return ""; }
 }
 
-function vistaChat(phone, key, role, nombre, { notice = "", productos = null, q = "", buscar = "", todos = false } = {}) {
+function vistaChat(phone, key, role, nombre, { notice = "", productos = null, q = "", buscar = "", todos = false, permisos = [] } = {}) {
   const f = ficha(phone);
   const disp = prettyName(phone, f.c.name);
   const k = encodeURIComponent(key);
@@ -700,7 +710,7 @@ function vistaChat(phone, key, role, nombre, { notice = "", productos = null, q 
       var fin = document.getElementById("fin");
       if (fin && !${buscar ? "true" : "false"}) fin.scrollIntoView({ block: "end" });
     })();
-    </script>`, { key, role, nombre, activa: "bandeja" });
+    </script>`, { key, role, nombre, permisos, activa: "bandeja" });
 }
 
 // ─── Apartados de una clienta (dentro del chat) ──────────────────
@@ -941,7 +951,7 @@ function vistaCampanas(key, role, nombre, notice = "") {
 // Pensada para la cajera: números grandes, pocos toques, y al final del
 // día el cuadre listo. Sirve igual con el dedo en el celular que con el
 // mouse en la computadora.
-function vistaCaja(key, role, nombre, notice = "") {
+function vistaCaja(key, role, nombre, notice = "", permisos = []) {
   const k = encodeURIComponent(key);
   const hoy = ventas_del_dia();
   const c = cuadre();
@@ -1081,7 +1091,7 @@ function vistaCaja(key, role, nombre, notice = "") {
       pinta();
     })();
     </script>
-  `, { key, role, nombre, activa: "caja" });
+  `, { key, role, nombre, permisos, activa: "caja" });
 }
 
 // ─── Gastos del día (dentro de la caja) ──────────────────────────
@@ -1266,7 +1276,7 @@ function vistaPedidos(key, role, nombre) {
 }
 
 // ─── Vista: APARTADOS (todas) ────────────────────────────────────
-function vistaApartados(key, role, nombre, filtro, notice = "") {
+function vistaApartados(key, role, nombre, filtro, notice = "", permisos = []) {
   const k = encodeURIComponent(key);
   const r = resumen_apartados();
   const lista = todos_apartados(filtro === "historial" ? "todos" : "activo")
@@ -1311,7 +1321,7 @@ function vistaApartados(key, role, nombre, filtro, notice = "") {
       <p class="muted" style="margin:8px 0 0">Días que dura un apartado nuevo. El recordatorio sale 3 días antes y el día que vence.</p>
     </div>` : ""}
     <p class="muted">Para apartar algo, entra a la conversación de la clienta y usa «➕ Apartar una peluca».</p>
-  `, { key, role, nombre, activa: "apartados" });
+  `, { key, role, nombre, permisos, activa: "apartados" });
 }
 
 // ─── Vista: DASHBOARD (solo jefa) ────────────────────────────────
@@ -1467,6 +1477,17 @@ function vistaEquipo(key, role, nombre, notice = "") {
       <div class="kv"><span>Últimos 7 días</span><b>${d.clientas} clientas · ${d.mensajes} mensajes</b></div>
       <div class="kv"><span>Respuesta media</span><b>${d.respuesta_media_min === null ? "—" : `${d.respuesta_media_min} min`}</b></div>
       <div class="kv"><span>Ventas atribuidas</span><b>${d.ventas} · RD$${rd(d.monto)}</b></div>
+      <form method="post" action="/panel/equipo/permisos" style="margin:10px 0">
+        <input type="hidden" name="key" value="${esc(key)}"><input type="hidden" name="id" value="${e.id}">
+        <div class="muted" style="margin-bottom:5px">Qué puede ver (WhatsApp lo tiene siempre):</div>
+        ${PERMISOS.map(pp => {
+          const on = String(e.permisos || "").split(",").map(s => s.trim()).includes(pp.id);
+          return `<label style="display:block;font-size:.87rem;margin:3px 0">
+            <input type="checkbox" name="permisos" value="${esc(pp.id)}" ${on ? "checked" : ""}>
+            <b>${esc(pp.label)}</b> <span class="muted">— ${esc(pp.detalle)}</span></label>`;
+        }).join("")}
+        <button class="ghost" type="submit" style="padding:8px 12px;font-size:.8rem;margin-top:6px">Guardar permisos</button>
+      </form>
       <p class="muted" style="margin:9px 0 4px">Su enlace personal (mándaselo por WhatsApp):</p>
       <input type="text" readonly value="${esc(link)}" onclick="this.select()" style="font-size:.78rem">
       <div class="row">
@@ -1495,9 +1516,13 @@ function vistaEquipo(key, role, nombre, notice = "") {
       <form method="post" action="/panel/equipo/nueva">
         <input type="hidden" name="key" value="${esc(key)}">
         <input type="text" name="nombre" placeholder="Nombre de la empleada (ej: Ana)" required>
+        <div class="muted" style="margin:10px 0 5px">Empieza <b>solo con WhatsApp</b>. Marca lo demás únicamente si lo necesita:</div>
+        ${PERMISOS.map(pp => `<label style="display:block;font-size:.87rem;margin:3px 0">
+          <input type="checkbox" name="permisos" value="${esc(pp.id)}">
+          <b>${esc(pp.label)}</b> <span class="muted">— ${esc(pp.detalle)}</span></label>`).join("")}
         <button class="big" type="submit">Crear su cuenta</button>
       </form>
-      <p class="muted" style="margin:8px 0 0">Se le genera su propio enlace. Entra con ese enlace y todo lo que responda queda a su nombre.</p>
+      <p class="muted" style="margin:8px 0 0">Se le genera su propio enlace. Entra con ese enlace y todo lo que responda queda a su nombre. <b>Sin marcar nada, solo ve las conversaciones de WhatsApp</b> — ni la caja, ni las ventas del día, ni los apartados.</p>
     </div>
     ${filas || `<p class="muted">Todavía no hay empleadas con cuenta propia.</p>`}
     ${EMPLOYEE_KEY ? `<p class="muted">También sigue funcionando la clave compartida vieja (aparece como «Empleada» en los números). Cuando todas tengan la suya, se puede quitar.</p>` : ""}
@@ -1521,6 +1546,13 @@ export function mount_panel(app) {
     if (explicita) guardar_cookie(res, key);
     return { key, role: yo.role, nombre: yo.nombre };
   };
+
+  // Corta el paso con un mensaje decente, no con un error feo.
+  const sinPermiso = (g, res, que) => res.status(403).send(shell("Sin acceso",
+    `<div class="card"><p>No tienes acceso a ${esc(que)}, mi amor 💕</p>
+     <p class="muted">Si necesitas entrar ahí, pídeselo a Winny.</p>
+     <a href="/panel?key=${encodeURIComponent(g.key)}">← Volver a las conversaciones</a></div>`,
+    { key: g.key, role: g.role, nombre: g.nombre, permisos: g.permisos }));
 
   const soloJefa = (g, res) => {
     if (g.role === "jefa") return false;
@@ -1596,7 +1628,7 @@ self.addEventListener("fetch", e => {
   app.get("/panel", (req, res) => {
     const g = guard(req, res); if (!g) return;
     res.send(vistaBandeja(g.key, g.role, g.nombre, (req.query.f || "").toString(),
-      (req.query.buscar || "").toString().trim().slice(0, 60)));
+      (req.query.buscar || "").toString().trim().slice(0, 60), g.permisos));
   });
 
   // Instrucciones para instalarla en el celular.
@@ -1656,7 +1688,8 @@ self.addEventListener("fetch", e => {
     res.send(vistaChat(phone, g.key, g.role, g.nombre, {
       notice, productos, q,
       buscar: (req.query.buscar || "").toString().trim().slice(0, 60),
-      todos: String(req.query.todos || "") === "1"
+      todos: String(req.query.todos || "") === "1",
+      permisos: g.permisos
     }));
   });
 
@@ -1802,11 +1835,13 @@ self.addEventListener("fetch", e => {
     let notice = "";
     if (req.query.ok) notice = `<div class="notice">✅ ${esc(String(req.query.ok))}</div>`;
     if (req.query.err) notice = `<div class="notice err">⚠️ ${esc(String(req.query.err))}</div>`;
-    res.send(vistaCaja(g.key, g.role, g.nombre, notice));
+    if (!puede(g, "caja")) return sinPermiso(g, res, "la caja");
+    res.send(vistaCaja(g.key, g.role, g.nombre, notice, g.permisos));
   });
 
   app.post("/panel/caja", (req, res) => {
     const g = guard(req, res); if (!g) return;
+    if (!puede(g, "caja")) return sinPermiso(g, res, "la caja");
     const b = req.body || {};
     const atras = `/panel/caja?key=${encodeURIComponent(g.key)}`;
     try {
@@ -1826,12 +1861,14 @@ self.addEventListener("fetch", e => {
 
   app.post("/panel/caja/anular", (req, res) => {
     const g = guard(req, res); if (!g) return;
+    if (!puede(g, "caja")) return sinPermiso(g, res, "la caja");
     anular_venta(parseInt(req.body?.id, 10), g.nombre);
     res.redirect(`/panel/caja?key=${encodeURIComponent(g.key)}&ok=` + encodeURIComponent("Venta anulada."));
   });
 
   app.post("/panel/caja/gasto", (req, res) => {
     const g = guard(req, res); if (!g) return;
+    if (!puede(g, "caja")) return sinPermiso(g, res, "la caja");
     const b = req.body || {};
     const atras = `/panel/caja?key=${encodeURIComponent(g.key)}`;
     try {
@@ -1857,6 +1894,7 @@ self.addEventListener("fetch", e => {
 
   app.post("/panel/caja/cerrar", (req, res) => {
     const g = guard(req, res); if (!g) return;
+    if (!puede(g, "caja")) return sinPermiso(g, res, "la caja");
     const atras = `/panel/caja?key=${encodeURIComponent(g.key)}`;
     try {
       const r = cerrar_caja({
@@ -1901,7 +1939,8 @@ self.addEventListener("fetch", e => {
     let notice = "";
     if (req.query.ok) notice = `<div class="notice">✅ ${esc(String(req.query.ok))}</div>`;
     if (req.query.err) notice = `<div class="notice err">⚠️ ${esc(String(req.query.err))}</div>`;
-    res.send(vistaApartados(g.key, g.role, g.nombre, (req.query.f || "").toString(), notice));
+    if (!puede(g, "apartados")) return sinPermiso(g, res, "los apartados");
+    res.send(vistaApartados(g.key, g.role, g.nombre, (req.query.f || "").toString(), notice, g.permisos));
   });
 
   // Solo dígitos: la gente escribe "8,000", "RD$8000" o "8.000".
@@ -1909,6 +1948,7 @@ self.addEventListener("fetch", e => {
 
   app.post("/panel/apartado/nuevo", (req, res) => {
     const g = guard(req, res); if (!g) return;
+    if (!puede(g, "apartados")) return sinPermiso(g, res, "los apartados");
     const b = req.body || {};
     const phone = (b.phone || "").toString();
     try {
@@ -1929,6 +1969,7 @@ self.addEventListener("fetch", e => {
 
   app.post("/panel/apartado/abonar", (req, res) => {
     const g = guard(req, res); if (!g) return;
+    if (!puede(g, "apartados")) return sinPermiso(g, res, "los apartados");
     const b = req.body || {};
     const phone = (b.phone || "").toString();
     try {
@@ -1949,6 +1990,7 @@ self.addEventListener("fetch", e => {
 
   app.post("/panel/apartado/estado", (req, res) => {
     const g = guard(req, res); if (!g) return;
+    if (!puede(g, "apartados")) return sinPermiso(g, res, "los apartados");
     const b = req.body || {};
     const phone = (b.phone || "").toString();
     cambiar_estado(parseInt(b.id, 10), (b.estado || "").toString());
@@ -1957,6 +1999,7 @@ self.addEventListener("fetch", e => {
 
   app.post("/panel/apartado/plazo", (req, res) => {
     const g = guard(req, res); if (!g) return;
+    if (!puede(g, "apartados")) return sinPermiso(g, res, "los apartados");
     const b = req.body || {};
     const phone = (b.phone || "").toString();
     ampliar_plazo(parseInt(b.id, 10), monto(b.dias));
@@ -1997,7 +2040,7 @@ self.addEventListener("fetch", e => {
     const g = guard(req, res); if (!g) return;
     if (soloJefa(g, res)) return;
     try {
-      const e = create_employee((req.body?.nombre || "").toString());
+      const e = create_employee((req.body?.nombre || "").toString(), req.body?.permisos || "");
       logger.info({ empleada: e.nombre }, "👥 Panel: empleada creada");
       res.redirect(aEquipo(g.key, "&ok=" + encodeURIComponent(`Cuenta de ${e.nombre} creada. Cópiale su enlace.`)));
     } catch (e) {
@@ -2010,6 +2053,14 @@ self.addEventListener("fetch", e => {
     if (soloJefa(g, res)) return;
     set_active(parseInt(req.body?.id, 10), String(req.body?.activa) === "1");
     res.redirect(aEquipo(g.key, "&ok=" + encodeURIComponent("Listo.")));
+  });
+
+  app.post("/panel/equipo/permisos", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    // Si no marca ninguna casilla, el navegador no manda nada → se queda solo con WhatsApp.
+    set_permisos(parseInt(req.body?.id, 10), req.body?.permisos || "");
+    res.redirect(aEquipo(g.key, "&ok=" + encodeURIComponent("Permisos guardados.")));
   });
 
   app.post("/panel/equipo/clave", (req, res) => {

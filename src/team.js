@@ -25,6 +25,12 @@ db.exec(`
 try { db.exec("ALTER TABLE messages ADD COLUMN agent TEXT"); } catch { /* ya existe */ }
 // A quién le toca esta clienta.
 try { db.exec("ALTER TABLE contacts ADD COLUMN assigned_to TEXT"); } catch { /* ya existe */ }
+// Qué puede ver cada empleada. Vacío = solo WhatsApp (bandeja y chat).
+// Las que ya existían se quedan como estaban para no quitarles nada de golpe.
+try {
+  db.exec("ALTER TABLE employees ADD COLUMN permisos TEXT");
+  db.exec("UPDATE employees SET permisos = 'caja,apartados' WHERE permisos IS NULL");
+} catch { /* ya existe */ }
 
 // Clave legible pero no adivinable: wbs-ana-83f2
 function nueva_clave(nombre) {
@@ -34,19 +40,35 @@ function nueva_clave(nombre) {
   return `wbs-${slug}-${crypto.randomBytes(2).toString("hex")}`;
 }
 
+// Permisos que se le pueden dar a una empleada, además del WhatsApp
+// (la bandeja y el chat los tiene siempre: para eso está).
+export const PERMISOS = [
+  { id: "caja", label: "Caja", detalle: "Cobrar y ver el cuadre y las ventas del día" },
+  { id: "apartados", label: "Apartados", detalle: "Ver y registrar apartados y abonos" }
+];
+
+function limpiar_permisos(v) {
+  const lista = Array.isArray(v) ? v : String(v || "").split(",");
+  return lista.map(s => s.trim()).filter(s => PERMISOS.some(p => p.id === s)).join(",");
+}
+
 export function list_employees(incluir_inactivas = true) {
-  return db.prepare(`SELECT id, nombre, clave, activa, created_at FROM employees
+  return db.prepare(`SELECT id, nombre, clave, activa, created_at, permisos FROM employees
                      ${incluir_inactivas ? "" : "WHERE activa = 1"}
                      ORDER BY activa DESC, nombre ASC`).all();
 }
 
-export function create_employee(nombre) {
+export function create_employee(nombre, permisos = "") {
   const n = (nombre || "").trim().slice(0, 40);
   if (!n) throw new Error("Falta el nombre");
   const clave = nueva_clave(n);
-  db.prepare("INSERT INTO employees (nombre, clave, activa, created_at) VALUES (?, ?, 1, ?)")
-    .run(n, clave, Date.now());
+  db.prepare("INSERT INTO employees (nombre, clave, activa, created_at, permisos) VALUES (?, ?, 1, ?, ?)")
+    .run(n, clave, Date.now(), limpiar_permisos(permisos));
   return { nombre: n, clave };
+}
+
+export function set_permisos(id, permisos) {
+  db.prepare("UPDATE employees SET permisos = ? WHERE id = ?").run(limpiar_permisos(permisos), id);
 }
 
 export function set_active(id, activa) {
@@ -64,7 +86,7 @@ export function regenerate_key(id) {
 // Devuelve la empleada ACTIVA dueña de esa clave (o null).
 export function find_by_key(clave) {
   if (!clave) return null;
-  return db.prepare("SELECT id, nombre FROM employees WHERE clave = ? AND activa = 1").get(clave) || null;
+  return db.prepare("SELECT id, nombre, permisos FROM employees WHERE clave = ? AND activa = 1").get(clave) || null;
 }
 
 // ─── Productividad ───────────────────────────────────────────────
