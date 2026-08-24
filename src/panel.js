@@ -30,6 +30,10 @@ import {
   apartados_de, todos_apartados, pagos_de, resumen_apartados, phones_con_apartado,
   plazo_dias, start_layaway_poller
 } from "./apartados.js";
+import {
+  METODOS, categorias, set_categorias, registrar_venta, anular_venta,
+  ventas_del_dia, cuadre, borrar_venta_anulada
+} from "./ventas.js";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
 
@@ -70,6 +74,27 @@ function quien_es(k) {
   if (emp) return { role: "empleada", nombre: emp.nombre, id: emp.id };
   if (EMPLOYEE_KEY && k === EMPLOYEE_KEY) return { role: "empleada", nombre: "Empleada" };
   return null;
+}
+
+// ─── Sesión con cookie ───────────────────────────────────────────
+// La app instalada en el celular abre en /panel SIN clave en el enlace.
+// Por eso, la primera vez que entra con su clave, se guarda en una cookie
+// (90 días, HttpOnly, solo por HTTPS). "Salir" la borra.
+const COOKIE = "wpk";
+
+function cookie_key(req) {
+  const raw = req.headers?.cookie || "";
+  const m = raw.match(/(?:^|;\s*)wpk=([^;]+)/);
+  try { return m ? decodeURIComponent(m[1]) : ""; } catch { return ""; }
+}
+
+function guardar_cookie(res, key) {
+  res.setHeader("Set-Cookie",
+    `${COOKIE}=${encodeURIComponent(key)}; Path=/panel; Max-Age=${90 * 24 * 3600}; HttpOnly; Secure; SameSite=Lax`);
+}
+
+function borrar_cookie(res) {
+  res.setHeader("Set-Cookie", `${COOKIE}=; Path=/panel; Max-Age=0; HttpOnly; Secure; SameSite=Lax`);
 }
 
 function esc(s) {
@@ -221,15 +246,26 @@ function shell(title, inner, { key = "", role = "", nombre = "", activa = "" } =
     <nav class="nav">
       <a class="${activa === "bandeja" ? "on" : ""}" href="/panel?key=${k}">📥 Bandeja</a>
       ${role === "empleada" ? `<a class="${activa === "mias" ? "on" : ""}" href="/panel?key=${k}&f=mias">👩 Mías</a>` : ""}
+      <a class="${activa === "caja" ? "on" : ""}" href="/panel/caja?key=${k}">🧾 Caja</a>
       <a class="${activa === "apartados" ? "on" : ""}" href="/panel/apartados?key=${k}">🔖 Apartados</a>
       ${role === "jefa" ? `<a class="${activa === "dash" ? "on" : ""}" href="/panel/dashboard?key=${k}">📊 Números</a>` : ""}
       ${role === "jefa" ? `<a class="${activa === "equipo" ? "on" : ""}" href="/panel/equipo?key=${k}">👥 Equipo</a>` : ""}
       ${role === "jefa" ? `<a class="${activa === "pedidos" ? "on" : ""}" href="/panel/pedidos?key=${k}">🧾 Pedidos</a>` : ""}
+      <a class="${activa === "app" ? "on" : ""}" href="/panel/app?key=${k}">📲 App</a>
+      <a href="/panel/salir">🚪 Salir</a>
     </nav>` : "";
 
   return `<!doctype html><html lang="es"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>${esc(title)}</title>
+<link rel="manifest" href="/panel/manifest.webmanifest">
+<meta name="theme-color" content="#c2185b">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Winny Panel">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="/panel/icono.jpg">
+<link rel="icon" href="/panel/icono.jpg">
 <style>
 :root{--pink:#c2185b;--pink-soft:#fce4ec;--ink:#232326;--soft:#6b7280;--line:#e7e7ec;--bg:#f4f5f7}
 *{box-sizing:border-box}
@@ -300,7 +336,9 @@ details summary{cursor:pointer;font-weight:700;font-size:.9rem;color:var(--pink)
 </style></head><body>
 <header><span>🌸 Winny — Centro de atención</span>${role ? `<span class="rol">${esc(nombre || role)}</span>` : ""}</header>
 ${nav}
-<div class="wrap">${inner}</div></body></html>`;
+<div class="wrap">${inner}</div>
+<script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/panel/sw.js').catch(function(){})}</script>
+</body></html>`;
 }
 
 function loginForm(msg) {
@@ -657,6 +695,150 @@ function apartadosCard(phone, key) {
   </div>`;
 }
 
+// ─── Vista: CAJA (venta de mostrador) ────────────────────────────
+// Pensada para la cajera: números grandes, pocos toques, y al final del
+// día el cuadre listo. Sirve igual con el dedo en el celular que con el
+// mouse en la computadora.
+function vistaCaja(key, role, nombre, notice = "") {
+  const k = encodeURIComponent(key);
+  const hoy = ventas_del_dia();
+  const c = cuadre();
+  const cats = categorias();
+
+  const botonesCat = cats.map(x =>
+    `<button type="button" class="opt cat" data-v="${esc(x)}">${esc(x)}</button>`).join("");
+  const botonesMet = METODOS.map(m =>
+    `<button type="button" class="opt met" data-v="${esc(m.id)}">${m.emoji} ${esc(m.label)}</button>`).join("");
+
+  const lista = hoy.slice(0, 30).map(v => {
+    const met = METODOS.find(m => m.id === v.metodo);
+    return `<div class="item" style="${v.anulada ? "opacity:.5" : ""}">
+      <span class="time">${esc(fmtTime(v.ts).split(", ")[1] || fmtTime(v.ts))}</span>
+      <div class="n">${v.anulada ? "<s>" : ""}RD$${rd(v.monto)}${v.anulada ? "</s> ANULADA" : ""}</div>
+      <div class="p">${met ? met.emoji + " " + esc(met.label) : esc(v.metodo)}${v.categoria ? " · " + esc(v.categoria) : ""}${v.cajera ? " · " + esc(v.cajera) : ""}</div>
+      ${v.anulada ? (role === "jefa" ? `<form method="post" action="/panel/caja/borrar" style="margin-top:6px">
+        <input type="hidden" name="key" value="${esc(key)}"><input type="hidden" name="id" value="${v.id}">
+        <button class="grey" type="submit" style="padding:6px 10px;font-size:.74rem">Quitar de la lista</button></form>` : "")
+      : `<form method="post" action="/panel/caja/anular" style="margin-top:6px"
+          onsubmit="return confirm('¿Anular esta venta de RD$${rd(v.monto)}?')">
+        <input type="hidden" name="key" value="${esc(key)}"><input type="hidden" name="id" value="${v.id}">
+        <button class="grey" type="submit" style="padding:6px 10px;font-size:.74rem">Anular</button></form>`}
+    </div>`;
+  }).join("");
+
+  const t = (num, txt) => `<div class="tile"><b>${num}</b><span>${txt}</span></div>`;
+
+  return shell("Caja", `
+    <h2 style="margin:4px 0 10px">🧾 Caja — venta de hoy</h2>
+    ${notice}
+    <form id="fventa" method="post" action="/panel/caja">
+      <input type="hidden" name="key" value="${esc(key)}">
+      <input type="hidden" name="monto" id="fmonto">
+      <input type="hidden" name="categoria" id="fcat">
+      <input type="hidden" name="metodo" id="fmet">
+
+      <div class="card" style="text-align:center;padding:18px 15px">
+        <div class="muted" style="font-size:.8rem">MONTO DE LA VENTA</div>
+        <div id="display" style="font-size:2.6rem;font-weight:800;letter-spacing:-1px;line-height:1.2">RD$0</div>
+      </div>
+
+      <div class="keypad">
+        ${[1,2,3,4,5,6,7,8,9].map(n => `<button type="button" class="tecla" data-d="${n}">${n}</button>`).join("")}
+        <button type="button" class="tecla" data-d="00">00</button>
+        <button type="button" class="tecla" data-d="0">0</button>
+        <button type="button" class="tecla borrar" id="borrar">⌫</button>
+      </div>
+
+      <div class="card">
+        <h3>¿Qué se llevó?</h3>
+        <div class="opts">${botonesCat}</div>
+      </div>
+
+      <div class="card">
+        <h3>¿Cómo pagó?</h3>
+        <div class="opts">${botonesMet}</div>
+      </div>
+
+      <button class="big" type="submit" id="cobrar" style="font-size:1.15rem;padding:16px">COBRAR</button>
+      <p class="muted" id="aviso" style="text-align:center;margin-top:8px"></p>
+    </form>
+
+    <h3 style="margin:20px 0 8px">💰 Cuadre de hoy</h3>
+    <div class="tiles">
+      ${t("RD$" + rd(c.total), "Total del día")}
+      ${METODOS.map(m => t("RD$" + rd(c.por_metodo[m.id].total), m.emoji + " " + m.label)).join("")}
+      ${t(c.cantidad, "🧾 Ventas")}
+    </div>
+
+    <h3 style="margin:18px 0 8px">Ventas de hoy</h3>
+    ${lista || `<p class="muted">Todavía no se ha cobrado nada hoy.</p>`}
+    ${role === "jefa" ? `<div class="card" style="margin-top:14px">
+      <h3>⚙️ Botones de producto</h3>
+      <form method="post" action="/panel/caja/categorias">
+        <input type="hidden" name="key" value="${esc(key)}">
+        <input type="text" name="cats" value="${esc(cats.join(", "))}">
+        <button class="ghost big" type="submit">Guardar</button>
+      </form>
+      <p class="muted" style="margin:8px 0 0">Sepáralos con comas. Son los botones que ve la cajera.</p>
+    </div>` : ""}
+
+    <style>
+    .keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin:12px 0}
+    .tecla{background:#fff;color:var(--ink);border:1px solid var(--line);font-size:1.6rem;font-weight:700;
+      padding:18px 0;border-radius:14px}
+    .tecla:active{background:var(--pink-soft)}
+    .tecla.borrar{background:#f3f4f6;font-size:1.3rem}
+    .opts{display:flex;flex-wrap:wrap;gap:8px}
+    .opt{background:#fff;color:var(--ink);border:1.5px solid var(--line);font-weight:600;font-size:.9rem;
+      padding:12px 15px;border-radius:12px}
+    .opt.sel{background:var(--pink);color:#fff;border-color:var(--pink)}
+    </style>
+    <script>
+    (function(){
+      var digits = "";
+      var display = document.getElementById("display");
+      var fmonto = document.getElementById("fmonto");
+      var fcat = document.getElementById("fcat");
+      var fmet = document.getElementById("fmet");
+      var aviso = document.getElementById("aviso");
+
+      function pinta(){
+        var n = digits ? parseInt(digits, 10) : 0;
+        display.textContent = "RD$" + n.toLocaleString("es-DO");
+        fmonto.value = String(n);
+      }
+      Array.prototype.forEach.call(document.querySelectorAll(".tecla[data-d]"), function(b){
+        b.addEventListener("click", function(){
+          if (digits.length < 9) { digits += b.getAttribute("data-d"); digits = digits.replace(/^0+(?=\\d)/, ""); pinta(); }
+        });
+      });
+      document.getElementById("borrar").addEventListener("click", function(){
+        digits = digits.slice(0, -1); pinta();
+      });
+      function grupo(clase, campo){
+        Array.prototype.forEach.call(document.querySelectorAll("." + clase), function(b){
+          b.addEventListener("click", function(){
+            var ya = b.classList.contains("sel");
+            Array.prototype.forEach.call(document.querySelectorAll("." + clase), function(o){ o.classList.remove("sel"); });
+            if (!ya) { b.classList.add("sel"); campo.value = b.getAttribute("data-v"); }
+            else { campo.value = ""; }
+          });
+        });
+      }
+      grupo("cat", fcat);
+      grupo("met", fmet);
+
+      document.getElementById("fventa").addEventListener("submit", function(e){
+        if (!fmonto.value || fmonto.value === "0") { e.preventDefault(); aviso.textContent = "⚠️ Falta el monto"; return; }
+        if (!fmet.value) { e.preventDefault(); aviso.textContent = "⚠️ Falta marcar cómo pagó"; return; }
+        aviso.textContent = "";
+      });
+      pinta();
+    })();
+    </script>
+  `, { key, role, nombre, activa: "caja" });
+}
+
 // ─── Vista: PEDIDOS (solo jefa) ──────────────────────────────────
 // Antes esto era un enlace a /pending, que devolvía datos crudos (JSON) y
 // parecía roto. Ahora es una página de verdad, ordenada por urgencia.
@@ -809,6 +991,7 @@ function vistaDashboard(key, role, nombre) {
   const rows = inbox_rows();
   const n = contar(rows);
   const ap = resumen_apartados();
+  const caja = cuadre();
   const conv = convos ? Math.round(((pedidosHoy.n || 0) / convos) * 100) : 0;
 
   const t = (num, txt) => `<div class="tile"><b>${num}</b><span>${txt}</span></div>`;
@@ -842,6 +1025,12 @@ function vistaDashboard(key, role, nombre) {
       ${t(porConfirmar, "⚠️ Pagos por confirmar")}
       ${t(porEnviar, "📦 Pedidos por enviar")}
       ${t(n.humano, "👤 En manos humanas")}
+    </div>
+    <h3 style="margin:16px 0 8px">🧾 Caja de la tienda hoy</h3>
+    <div class="tiles">
+      ${t("RD$" + rd(caja.total), "Total mostrador")}
+      ${METODOS.map(m => t("RD$" + rd(caja.por_metodo[m.id].total), m.emoji + " " + m.label)).join("")}
+      ${t(caja.cantidad, "🧾 Ventas")}
     </div>
     <h3 style="margin:16px 0 8px">🔖 Apartados</h3>
     <div class="tiles">
@@ -962,12 +1151,16 @@ function vistaEquipo(key, role, nombre, notice = "") {
 export function mount_panel(app) {
   const guard = (req, res) => {
     if (!ADMIN_KEY) { res.status(503).send("El panel no está configurado (falta ADMIN_KEY)."); return null; }
-    const key = (req.query.key ?? req.body?.key ?? "").toString();
+    const explicita = (req.query.key ?? req.body?.key ?? "").toString();
+    const key = explicita || cookie_key(req);
     const yo = quien_es(key);
     if (!yo) {
+      if (cookie_key(req)) borrar_cookie(res); // cookie vieja o clave revocada
       res.status(key ? 401 : 200).send(loginForm(key ? "Clave incorrecta" : ""));
       return null;
     }
+    // Cada vez que entra con su clave, se renueva la sesión del celular.
+    if (explicita) guardar_cookie(res, key);
     return { key, role: yo.role, nombre: yo.nombre };
   };
 
@@ -983,9 +1176,102 @@ export function mount_panel(app) {
   const volver = (key, phone, extra = "") =>
     `/panel/chat?key=${encodeURIComponent(key)}&phone=${encodeURIComponent(phone || "")}${extra}`;
 
+  // ── Piezas de la APP (sin clave: no llevan datos, y el navegador pide el
+  //    manifest y el service worker sin cookies) ──
+  app.get("/panel/manifest.webmanifest", (_req, res) => {
+    res.type("application/manifest+json").json({
+      name: "Winny — Centro de atención",
+      short_name: "Winny Panel",
+      description: "Conversaciones, clientas, apartados y pedidos de Winny Beauty Supply",
+      start_url: "/panel",
+      scope: "/panel",
+      display: "standalone",
+      orientation: "portrait",
+      background_color: "#f4f5f7",
+      theme_color: "#c2185b",
+      lang: "es-DO",
+      icons: [
+        { src: "/panel/icono.jpg", sizes: "1080x1080", type: "image/jpeg", purpose: "any" },
+        { src: "/panel/icono.jpg", sizes: "1080x1080", type: "image/jpeg", purpose: "maskable" }
+      ]
+    });
+  });
+
+  app.get("/panel/icono.jpg", (_req, res) => {
+    res.sendFile(path.resolve("assets/panel/icono.jpg"), err => {
+      if (err) res.status(404).end();
+    });
+  });
+
+  // Service worker: NO cachea las páginas (los datos tienen que estar al día).
+  // Solo guarda el ícono y muestra un aviso decente cuando no hay internet.
+  app.get("/panel/sw.js", (_req, res) => {
+    res.type("application/javascript").send(`const CACHE = "winny-panel-v1";
+const ESTATICOS = ["/panel/icono.jpg", "/panel/manifest.webmanifest"];
+self.addEventListener("install", e => {
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ESTATICOS)).then(() => self.skipWaiting()));
+});
+self.addEventListener("activate", e => {
+  e.waitUntil(caches.keys()
+    .then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k))))
+    .then(() => self.clients.claim()));
+});
+self.addEventListener("fetch", e => {
+  const req = e.request;
+  if (req.method !== "GET") return;
+  const url = new URL(req.url);
+  if (ESTATICOS.indexOf(url.pathname) !== -1) {
+    e.respondWith(caches.match(req).then(r => r || fetch(req)));
+    return;
+  }
+  e.respondWith(fetch(req).catch(() =>
+    new Response('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;padding:40px 24px;text-align:center;color:#232326"><div style="font-size:44px">📡</div><h2>Sin internet</h2><p style="color:#6b7280">El panel necesita conexión para traerte las conversaciones al día. Vuelve a intentarlo cuando tengas señal.</p></body>',
+      { headers: { "Content-Type": "text/html; charset=utf-8" } })));
+});`);
+  });
+
+  app.get("/panel/salir", (_req, res) => {
+    borrar_cookie(res);
+    res.send(loginForm("Sesión cerrada. Escribe tu clave para volver a entrar."));
+  });
+
   app.get("/panel", (req, res) => {
     const g = guard(req, res); if (!g) return;
     res.send(vistaBandeja(g.key, g.role, g.nombre, (req.query.f || "").toString()));
+  });
+
+  // Instrucciones para instalarla en el celular.
+  app.get("/panel/app", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    res.send(shell("Instalar la app", `
+      <h2 style="margin:4px 0 10px">📲 Ponlo en tu celular</h2>
+      <div class="card">
+        <p>Es la <b>misma</b> herramienta que usas en la computadora: los mismos mensajes, las mismas clientas, los mismos apartados. Lo que hagas en el celular aparece en la computadora al instante, porque es el mismo sistema.</p>
+      </div>
+      <div class="card">
+        <h3>📱 Android (Chrome)</h3>
+        <p>1. Abre este panel en Chrome.<br>
+           2. Toca los <b>tres puntitos</b> ⋮ arriba a la derecha.<br>
+           3. Toca <b>«Instalar app»</b> o «Agregar a pantalla principal».<br>
+           4. Confirma. Te queda el ícono de Winny en tu pantalla.</p>
+      </div>
+      <div class="card">
+        <h3>🍎 iPhone (Safari)</h3>
+        <p>1. Abre este panel en <b>Safari</b> (tiene que ser Safari).<br>
+           2. Toca el botón <b>Compartir</b> ⬆️ abajo en el centro.<br>
+           3. Baja y toca <b>«Añadir a pantalla de inicio»</b>.<br>
+           4. Ponle <b>Winny Panel</b> y dale Añadir.</p>
+      </div>
+      <div class="card">
+        <h3>🔐 Sobre la clave</h3>
+        <p>Ya quedaste con la sesión guardada en este teléfono por 90 días: la app abre directo, sin pedirte la clave otra vez.</p>
+        <p class="muted">Si te prestan el teléfono o lo pierdes, toca <b>🚪 Salir</b> arriba y la sesión se cierra.</p>
+      </div>
+      <div class="card">
+        <h3>🔔 Avisos</h3>
+        <p>Los avisos te siguen llegando por <b>WhatsApp</b> (el supervisor te escribe cuando una clienta necesita a una persona). No hace falta que tengas la app abierta.</p>
+      </div>
+    `, { key: g.key, role: g.role, nombre: g.nombre, activa: "app" }));
   });
 
   app.get("/panel/chat", async (req, res) => {
@@ -1015,6 +1301,54 @@ export function mount_panel(app) {
     const g = guard(req, res); if (!g) return;
     if (soloJefa(g, res)) return;
     res.send(vistaDashboard(g.key, g.role, g.nombre));
+  });
+
+  // ── CAJA (venta de mostrador) ──
+  app.get("/panel/caja", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    let notice = "";
+    if (req.query.ok) notice = `<div class="notice">✅ ${esc(String(req.query.ok))}</div>`;
+    if (req.query.err) notice = `<div class="notice err">⚠️ ${esc(String(req.query.err))}</div>`;
+    res.send(vistaCaja(g.key, g.role, g.nombre, notice));
+  });
+
+  app.post("/panel/caja", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    const b = req.body || {};
+    const atras = `/panel/caja?key=${encodeURIComponent(g.key)}`;
+    try {
+      registrar_venta({
+        monto: Number(String(b.monto ?? "").replace(/[^\d]/g, "")),
+        categoria: (b.categoria || "").toString().trim().slice(0, 60) || null,
+        metodo: (b.metodo || "").toString(),
+        cajera: g.nombre
+      });
+      const met = METODOS.find(m => m.id === b.metodo);
+      return res.redirect(atras + "&ok=" + encodeURIComponent(
+        `Venta de RD$${rd(Number(String(b.monto).replace(/[^\d]/g, "")))} cobrada${met ? " en " + met.label.toLowerCase() : ""} 💕`));
+    } catch (e) {
+      return res.redirect(atras + "&err=" + encodeURIComponent(e.message));
+    }
+  });
+
+  app.post("/panel/caja/anular", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    anular_venta(parseInt(req.body?.id, 10), g.nombre);
+    res.redirect(`/panel/caja?key=${encodeURIComponent(g.key)}&ok=` + encodeURIComponent("Venta anulada."));
+  });
+
+  app.post("/panel/caja/borrar", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    borrar_venta_anulada(parseInt(req.body?.id, 10));
+    res.redirect(`/panel/caja?key=${encodeURIComponent(g.key)}&ok=` + encodeURIComponent("Listo."));
+  });
+
+  app.post("/panel/caja/categorias", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    set_categorias((req.body?.cats || "").toString());
+    res.redirect(`/panel/caja?key=${encodeURIComponent(g.key)}&ok=` + encodeURIComponent("Botones actualizados."));
   });
 
   // ── PEDIDOS (solo jefa) ──
