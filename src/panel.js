@@ -21,7 +21,10 @@ import db, {
   set_handoff, clear_handoff, is_handed_off, mark_human_reply, get_open_orders, set_shipping
 } from "./db.js";
 import { send_text, send_image } from "./whatsapp.js";
-import { find_products, get_offers, get_by_code } from "./catalog.js";
+import { find_products, get_offers, get_by_code, get_catalog } from "./catalog.js";
+import {
+  todo_el_stock, mover, ajustar, resumen_inventario, por_acabarse, existencia
+} from "./inventario.js";
 import {
   list_employees, create_employee, set_active, regenerate_key, find_by_key, productividad, delete_employee,
   PERMISOS, set_permisos
@@ -289,6 +292,7 @@ function shell(title, inner, { key = "", role = "", nombre = "", activa = "", pe
       ${tiene("caja") ? `<a class="${activa === "caja" ? "on" : ""}" href="/panel/caja?key=${k}">🧾 Caja</a>` : ""}
       ${tiene("apartados") ? `<a class="${activa === "apartados" ? "on" : ""}" href="/panel/apartados?key=${k}">🔖 Apartados</a>` : ""}
       ${role === "jefa" ? `<a class="${activa === "dash" ? "on" : ""}" href="/panel/dashboard?key=${k}">📊 Números</a>` : ""}
+          ${tiene("caja") ? `<a class="${activa === "inventario" ? "on" : ""}" href="/panel/inventario?key=${k}">📦 Inventario</a>` : ""}
       ${role === "jefa" ? `<a class="${activa === "campanas" ? "on" : ""}" href="/panel/campanas?key=${k}">📣 Campañas</a>` : ""}
       ${role === "jefa" ? `<a class="${activa === "equipo" ? "on" : ""}" href="/panel/equipo?key=${k}">👥 Equipo</a>` : ""}
       ${role === "jefa" ? `<a class="${activa === "pedidos" ? "on" : ""}" href="/panel/pedidos?key=${k}">🧾 Pedidos</a>` : ""}
@@ -848,6 +852,70 @@ function apartadosCard(phone, key) {
   </div>`;
 }
 
+// ─── Vista: INVENTARIO ───────────────────────────────────────────
+async function vistaInventario(key, role, nombre, permisos, buscar = "", notice = "") {
+  const k = encodeURIComponent(key);
+  let cat = [];
+  try { cat = await get_catalog(); } catch { cat = []; }
+  const stock = todo_el_stock();
+  const r = resumen_inventario();
+
+  let lista = cat.filter(p => p.nombre);
+  if (buscar) {
+    const b = buscar.toLowerCase();
+    lista = lista.filter(p => `${p.codigo} ${p.nombre} ${p.colores} ${p.etiquetas}`.toLowerCase().includes(b));
+  }
+  // Lo que está por acabarse va de primero: es lo que hay que comprar.
+  lista.sort((a, b) => {
+    const ea = stock.get(a.codigo), eb = stock.get(b.codigo);
+    const ca = !ea ? 3 : ea.existencia <= 0 ? 0 : ea.existencia <= ea.minimo ? 1 : 2;
+    const cb = !eb ? 3 : eb.existencia <= 0 ? 0 : eb.existencia <= eb.minimo ? 1 : 2;
+    return ca - cb || String(a.nombre).localeCompare(String(b.nombre));
+  });
+
+  const fila = p => {
+    const s = stock.get(p.codigo);
+    const n = s ? s.existencia : null;
+    const etiqueta = n === null ? `<span class="pill tag">sin contar</span>`
+      : n <= 0 ? `<span class="pill urg">AGOTADO</span>`
+      : n <= s.minimo ? `<span class="pill rojo">quedan ${n}</span>`
+      : `<span class="pill hum">${n} en stock</span>`;
+    return `<div class="item">
+      <div class="n">${esc(p.nombre)} <span class="muted">#${esc(p.codigo)}</span></div>
+      <div style="margin:5px 0">${etiqueta}${p.precio_detalle ? ` <span class="muted">RD$${rd(p.precio_detalle)}</span>` : ""}</div>
+      <form method="post" action="/panel/inventario/mover" class="row" style="margin-top:4px">
+        <input type="hidden" name="key" value="${esc(key)}"><input type="hidden" name="codigo" value="${esc(p.codigo)}">
+        <input type="hidden" name="nombre" value="${esc(p.nombre)}">
+        <button name="cantidad" value="-1" class="grey" style="padding:9px 14px">−1</button>
+        <button name="cantidad" value="1" class="ghost" style="padding:9px 14px">+1</button>
+        <input type="text" name="contar" inputmode="numeric" placeholder="tengo…" style="flex:1;min-width:80px">
+        <button type="submit" name="accion" value="contar" style="padding:9px 13px;font-size:.8rem">Guardar</button>
+      </form></div>`;
+  };
+
+  const t = (num, txt) => `<div class="tile"><b>${num}</b><span>${txt}</span></div>`;
+
+  return shell("Inventario", `
+    <h2 style="margin:4px 0 10px">📦 Inventario</h2>
+    ${notice}
+    <div class="tiles">
+      ${t(r.unidades, "Unidades en total")}
+      ${t(r.productos, "Productos contados")}
+      ${t(r.por_acabarse, "⏰ Por acabarse")}
+      ${t(r.agotados, "🚫 Agotados")}
+    </div>
+    <form method="get" action="/panel/inventario" class="row" style="margin-bottom:8px">
+      <input type="hidden" name="key" value="${esc(key)}">
+      <input type="search" name="buscar" value="${esc(buscar)}" placeholder="Buscar producto…" style="flex:1;min-width:150px">
+      <button type="submit">Buscar</button>
+      ${buscar ? `<a class="pill tag" href="/panel/inventario?key=${k}">✕ quitar</a>` : ""}
+    </form>
+    <p class="muted">Escribe cuántas <b>tienes</b> en la cajita y dale Guardar. Los botones −1 y +1 son para arreglos rápidos.</p>
+    ${lista.length ? lista.map(fila).join("") : `<p class="muted">No encontré productos.</p>`}
+    <p class="muted" style="margin-top:14px">Lo que marques como <b>agotado</b> el bot deja de ofrecerlo solo. Lo que nunca has contado se queda como estaba.</p>
+  `, { key, role, nombre, permisos, activa: "inventario" });
+}
+
 // ─── Vista: RESPALDO (solo jefa) ─────────────────────────────────
 function vistaRespaldo(key, role, nombre) {
   const k = encodeURIComponent(key);
@@ -1025,8 +1093,11 @@ function vistaCampanas(key, role, nombre, notice = "") {
 // Pensada para la cajera: números grandes, pocos toques, y al final del
 // día el cuadre listo. Sirve igual con el dedo en el celular que con el
 // mouse en la computadora.
-function vistaCaja(key, role, nombre, notice = "", permisos = []) {
+async function vistaCaja(key, role, nombre, notice = "", permisos = []) {
   const k = encodeURIComponent(key);
+  let productos = [];
+  try { productos = (await get_catalog()).filter(p => p.nombre && p.disponible); } catch { productos = []; }
+  const stockCaja = todo_el_stock();
   const hoy = ventas_del_dia();
   const c = cuadre();
   const cats = categorias();
@@ -1078,6 +1149,17 @@ function vistaCaja(key, role, nombre, notice = "", permisos = []) {
       <div class="card">
         <h3>¿Qué se llevó?</h3>
         <div class="opts">${botonesCat}</div>
+        ${productos.length ? `
+        <div class="muted" style="margin:12px 0 5px">O escógelo del catálogo y se descuenta del inventario:</div>
+        <select name="codigo" id="fprod" style="width:100%;padding:11px;border-radius:10px;border:1px solid #ccd0d6;font-size:.95rem">
+          <option value="">— sin producto del catálogo —</option>
+          ${productos.map(p => {
+            const s = stockCaja.get(p.codigo);
+            const info = !s ? "" : s.existencia <= 0 ? " · AGOTADO" : ` · quedan ${s.existencia}`;
+            return `<option value="${esc(p.codigo)}" data-precio="${Number(p.precio_detalle) || 0}">${esc(p.nombre)} — RD$${rd(p.precio_detalle)}${esc(info)}</option>`;
+          }).join("")}
+        </select>
+        <p class="muted" style="margin:6px 0 0">Al escogerlo se pone el precio solo. Puedes cambiarlo con el teclado si le hiciste rebaja.</p>` : ""}
       </div>
 
       <div class="card">
@@ -1156,6 +1238,14 @@ function vistaCaja(key, role, nombre, notice = "", permisos = []) {
       }
       grupo("cat", fcat);
       grupo("met", fmet);
+
+      // Al escoger un producto del catálogo se pone su precio solo.
+      var prod = document.getElementById("fprod");
+      if (prod) prod.addEventListener("change", function(){
+        var op = prod.options[prod.selectedIndex];
+        var precio = op ? parseInt(op.getAttribute("data-precio") || "0", 10) : 0;
+        if (precio > 0) { digits = String(precio); pinta(); }
+      });
 
       document.getElementById("fventa").addEventListener("submit", function(e){
         if (!fmonto.value || fmonto.value === "0") { e.preventDefault(); aviso.textContent = "⚠️ Falta el monto"; return; }
@@ -1965,14 +2055,47 @@ self.addEventListener("fetch", e => {
     res.redirect(`/panel/campanas?key=${encodeURIComponent(g.key)}&ok=` + encodeURIComponent("Listo."));
   });
 
+  // ── INVENTARIO (quien tenga caja) ──
+  app.get("/panel/inventario", async (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (!puede(g, "caja")) return sinPermiso(g, res, "el inventario");
+    let notice = "";
+    if (req.query.ok) notice = `<div class="notice">✅ ${esc(String(req.query.ok))}</div>`;
+    if (req.query.err) notice = `<div class="notice err">⚠️ ${esc(String(req.query.err))}</div>`;
+    res.send(await vistaInventario(g.key, g.role, g.nombre, g.permisos,
+      (req.query.buscar || "").toString().trim().slice(0, 60), notice));
+  });
+
+  app.post("/panel/inventario/mover", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (!puede(g, "caja")) return sinPermiso(g, res, "el inventario");
+    const b = req.body || {};
+    const codigo = (b.codigo || "").toString();
+    const nombre = (b.nombre || "").toString().slice(0, 120) || null;
+    const atras = `/panel/inventario?key=${encodeURIComponent(g.key)}`;
+    try {
+      // Si escribió cuántas tiene, eso manda sobre los botones de −1/+1.
+      const contar = String(b.contar ?? "").replace(/[^\d]/g, "");
+      if (contar !== "") {
+        const q = ajustar(codigo, contar, { quien: g.nombre, nombre });
+        return res.redirect(atras + "&ok=" + encodeURIComponent(`${nombre || codigo}: quedan ${q}`));
+      }
+      const q = mover(codigo, parseInt(b.cantidad, 10), { motivo: "ajuste", quien: g.nombre, nombre });
+      return res.redirect(atras + "&ok=" + encodeURIComponent(
+        q === null ? "No cambié nada." : `${nombre || codigo}: quedan ${q}`));
+    } catch (e) {
+      return res.redirect(atras + "&err=" + encodeURIComponent(e.message));
+    }
+  });
+
   // ── CAJA (venta de mostrador) ──
-  app.get("/panel/caja", (req, res) => {
+  app.get("/panel/caja", async (req, res) => {
     const g = guard(req, res); if (!g) return;
     let notice = "";
     if (req.query.ok) notice = `<div class="notice">✅ ${esc(String(req.query.ok))}</div>`;
     if (req.query.err) notice = `<div class="notice err">⚠️ ${esc(String(req.query.err))}</div>`;
     if (!puede(g, "caja")) return sinPermiso(g, res, "la caja");
-    res.send(vistaCaja(g.key, g.role, g.nombre, notice, g.permisos));
+    res.send(await vistaCaja(g.key, g.role, g.nombre, notice, g.permisos));
   });
 
   app.post("/panel/caja", (req, res) => {
@@ -1981,15 +2104,21 @@ self.addEventListener("fetch", e => {
     const b = req.body || {};
     const atras = `/panel/caja?key=${encodeURIComponent(g.key)}`;
     try {
+      const codigo = (b.codigo || "").toString().trim() || null;
       registrar_venta({
         monto: Number(String(b.monto ?? "").replace(/[^\d]/g, "")),
         categoria: (b.categoria || "").toString().trim().slice(0, 60) || null,
         metodo: (b.metodo || "").toString(),
-        cajera: g.nombre
+        cajera: g.nombre,
+        codigo
       });
+      // Si la venta fue de un producto del catálogo, se descuenta del inventario.
+      let quedan = null;
+      if (codigo) quedan = mover(codigo, -1, { motivo: "venta", quien: g.nombre });
       const met = METODOS.find(m => m.id === b.metodo);
       return res.redirect(atras + "&ok=" + encodeURIComponent(
-        `Venta de RD$${rd(Number(String(b.monto).replace(/[^\d]/g, "")))} cobrada${met ? " en " + met.label.toLowerCase() : ""} 💕`));
+        `Venta de RD$${rd(Number(String(b.monto).replace(/[^\d]/g, "")))} cobrada${met ? " en " + met.label.toLowerCase() : ""} 💕` +
+        (quedan !== null ? ` · quedan ${quedan} en inventario` : "")));
     } catch (e) {
       return res.redirect(atras + "&err=" + encodeURIComponent(e.message));
     }

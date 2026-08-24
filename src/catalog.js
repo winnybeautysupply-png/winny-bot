@@ -112,9 +112,26 @@ export async function catalog_summary() {
   const cat = await get_catalog();
   const avail = cat.filter(p => p.disponible);
   if (!avail.length) return "";
-  return avail.map(p =>
-    `#${p.codigo} ${p.nombre} — RD$${p.precio_detalle}` +
-    (p.colores ? ` (${p.colores})` : "") +
-    (p.oferta ? " [OFERTA]" : "")
-  ).join("\n");
+
+  // Existencia real, si está contada. Se carga aparte y a prueba de fallos:
+  // si el inventario no responde, el catálogo sale igual que siempre.
+  let stock = new Map();
+  try {
+    const { todo_el_stock } = await import("./inventario.js");
+    stock = todo_el_stock();
+  } catch (e) {
+    logger.debug({ err: e?.message }, "Catálogo sin datos de inventario");
+  }
+
+  return avail.map(p => {
+    const s = stock.get(p.codigo);
+    // Sin registro = nunca se ha contado → se deja como estaba (no se inventa).
+    const nota = !s ? ""
+      : s.existencia <= 0 ? " [AGOTADO — NO lo ofrezcas]"
+      : s.existencia <= s.minimo ? ` [solo quedan ${s.existencia}]`
+      : "";
+    return `#${p.codigo} ${p.nombre} — RD$${p.precio_detalle}` +
+      (p.colores ? ` (${p.colores})` : "") +
+      (p.oferta ? " [OFERTA]" : "") + nota;
+  }).join("\n");
 }

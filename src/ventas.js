@@ -60,12 +60,16 @@ export function set_categorias(texto) {
     .run(limpio);
 }
 
-export function registrar_venta({ monto, categoria = null, metodo, nota = null, cajera = null }) {
+// Codigo del producto del catalogo, cuando la venta se hizo escogiendolo:
+// eso es lo que permite descontar del inventario.
+try { db.exec("ALTER TABLE sales ADD COLUMN codigo TEXT"); } catch { /* ya existe */ }
+
+export function registrar_venta({ monto, categoria = null, metodo, nota = null, cajera = null, codigo = null }) {
   const m = Number(monto);
   if (!Number.isFinite(m) || m <= 0) throw new Error("Falta el monto de la venta.");
   if (!METODOS.some(x => x.id === metodo)) throw new Error("Falta cómo pagó la clienta.");
-  const r = db.prepare(`INSERT INTO sales (monto, categoria, metodo, nota, cajera, ts) VALUES (?,?,?,?,?,?)`)
-    .run(m, categoria, metodo, nota, cajera, Date.now());
+  const r = db.prepare(`INSERT INTO sales (monto, categoria, metodo, nota, cajera, codigo, ts) VALUES (?,?,?,?,?,?,?)`)
+    .run(m, categoria, metodo, nota, cajera, codigo, Date.now());
   logger.info({ id: r.lastInsertRowid, monto: m, metodo, cajera }, "🧾 Venta de mostrador registrada");
   return r.lastInsertRowid;
 }
