@@ -786,7 +786,9 @@ function parse_owner_command(text) {
   return null;
 }
 
-async function handle_owner_command(parsed) {
+// Exportada para que el PANEL pueda confirmar un pago con el MISMO camino que usa
+// Winny por WhatsApp (misma factura, mismos avisos). Nada de logica duplicada.
+export async function handle_owner_command(parsed) {
   const owner = config.business.owner_phone;
 
   // ═══ CATÁLOGO por texto: "catalogo: nombre, precio" o "agrégalo al catálogo" tras mandar foto/video ═══

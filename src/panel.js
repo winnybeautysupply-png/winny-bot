@@ -14,9 +14,12 @@
 //
 // Roles: ADMIN_KEY = jefa (todo) · EMPLOYEE_KEY = empleada (bandeja+chat).
 // ═══════════════════════════════════════════════════════════════
+import fs from "fs";
 import path from "path";
 import multer from "multer";
-import db, { set_handoff, clear_handoff, is_handed_off, mark_human_reply, get_open_orders } from "./db.js";
+import db, {
+  set_handoff, clear_handoff, is_handed_off, mark_human_reply, get_open_orders, set_shipping
+} from "./db.js";
 import { send_text, send_image } from "./whatsapp.js";
 import { find_products, get_offers, get_by_code } from "./catalog.js";
 import {
@@ -38,6 +41,10 @@ import {
   audiencia, crear_campana, campana_activa, listar_campanas, conteo,
   cambiar_estado_campana, start_campaign_poller
 } from "./campanas.js";
+import {
+  TABLAS, exportar_csv, copiar_base, conteos, respaldos_guardados,
+  fecha_archivo, start_backup_poller
+} from "./respaldo.js";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
 
@@ -256,6 +263,7 @@ function shell(title, inner, { key = "", role = "", nombre = "", activa = "" } =
       ${role === "jefa" ? `<a class="${activa === "campanas" ? "on" : ""}" href="/panel/campanas?key=${k}">📣 Campañas</a>` : ""}
       ${role === "jefa" ? `<a class="${activa === "equipo" ? "on" : ""}" href="/panel/equipo?key=${k}">👥 Equipo</a>` : ""}
       ${role === "jefa" ? `<a class="${activa === "pedidos" ? "on" : ""}" href="/panel/pedidos?key=${k}">🧾 Pedidos</a>` : ""}
+      ${role === "jefa" ? `<a class="${activa === "respaldo" ? "on" : ""}" href="/panel/respaldo?key=${k}">💾 Respaldo</a>` : ""}
       <a class="${activa === "app" ? "on" : ""}" href="/panel/app?key=${k}">📲 App</a>
       <a href="/panel/salir">🚪 Salir</a>
     </nav>` : "";
@@ -763,6 +771,42 @@ function apartadosCard(phone, key) {
   </div>`;
 }
 
+// ─── Vista: RESPALDO (solo jefa) ─────────────────────────────────
+function vistaRespaldo(key, role, nombre) {
+  const k = encodeURIComponent(key);
+  const n = conteos();
+  const copias = respaldos_guardados();
+  const mb = b => (b / 1048576).toFixed(1);
+
+  const botonesCsv = Object.entries(TABLAS).map(([clave, t]) =>
+    `<a class="item" href="/panel/respaldo/csv/${clave}?key=${k}" style="display:flex;justify-content:space-between;align-items:center">
+      <span><b>${esc(t.titulo)}</b><br><span class="muted">${rd(n[clave] ?? "")} registros</span></span>
+      <span class="pill hum">⬇️ Excel</span></a>`).join("");
+
+  return shell("Respaldo", `
+    <h2 style="margin:4px 0 10px">💾 Respaldo</h2>
+    <div class="card">
+      <p>Todo tu negocio — conversaciones, clientas, pedidos, apartados y caja — vive en <b>un solo archivo</b> dentro del servidor. Si ese disco se daña, se pierde.</p>
+      <p class="muted">Baja una copia de vez en cuando y guárdala en tu celular o tu computadora. Esa copia que está <b>fuera</b> del servidor es la que de verdad te salva.</p>
+      <a class="item" href="/panel/respaldo/db?key=${k}" style="display:flex;justify-content:space-between;align-items:center;background:var(--pink-soft);border-color:var(--pink)">
+        <span><b>Copia completa de todo</b><br><span class="muted">Un archivo con absolutamente todo</span></span>
+        <span class="pill urg">⬇️ Bajar</span></a>
+    </div>
+
+    <h3 style="margin:18px 0 8px">Por partes (se abre en Excel)</h3>
+    ${botonesCsv}
+
+    <div class="card" style="margin-top:14px">
+      <h3>🔄 Copia automática</h3>
+      <p class="muted">El sistema guarda una copia al día y conserva las últimas 7, por si hay que devolverse.</p>
+      ${copias.length
+        ? copias.map(c => `<div class="kv"><span>${esc(c.archivo)}</span><b>${mb(c.bytes)} MB</b></div>`).join("")
+        : `<p class="muted">Todavía no hay copias automáticas (la primera sale unos minutos después de cada arranque).</p>`}
+      <p class="muted" style="margin-top:9px">⚠️ Estas copias viven en el <b>mismo disco</b>. Sirven si alguien borra algo por error, pero no si el disco se pierde. Para eso es la de arriba, la que bajas tú.</p>
+    </div>
+  `, { key, role, nombre, activa: "respaldo" });
+}
+
 // ─── Vista: CAMPAÑAS (solo jefa) ─────────────────────────────────
 function vistaCampanas(key, role, nombre, notice = "") {
   const k = encodeURIComponent(key);
@@ -1048,7 +1092,27 @@ function vistaPedidos(key, role, nombre) {
       <div class="row" style="margin-top:7px">
         <a class="pill hum" href="/panel/chat?key=${k}&phone=${encodeURIComponent(o.phone)}">💬 Abrir conversación</a>
         ${comprobante ? `<span class="pill tag">${comprobante}</span>` : ""}
-      </div></div>`;
+      </div>
+      ${o.status === "awaiting_verification" ? `<div class="row" style="margin-top:8px">
+        <form method="post" action="/panel/pedido/confirmar"
+              onsubmit="return confirm('¿El pago de ${esc(nombreCli)} sí llegó? Se le avisa y se le manda la factura.')">
+          <input type="hidden" name="key" value="${esc(key)}"><input type="hidden" name="phone" value="${esc(o.phone)}">
+          <button type="submit" style="padding:9px 13px;font-size:.82rem">✅ Confirmar pago</button>
+        </form>
+        <form method="post" action="/panel/pedido/rechazar"
+              onsubmit="return confirm('¿Avisarle que su pago NO ha llegado?')">
+          <input type="hidden" name="key" value="${esc(key)}"><input type="hidden" name="phone" value="${esc(o.phone)}">
+          <button class="grey" type="submit" style="padding:9px 13px;font-size:.82rem">✖️ No ha llegado</button>
+        </form>
+      </div>` : ""}
+      ${o.status === "paid" ? `<form method="post" action="/panel/pedido/enviado" style="margin-top:8px">
+        <input type="hidden" name="key" value="${esc(key)}"><input type="hidden" name="phone" value="${esc(o.phone)}">
+        <div class="row">
+          <input type="text" name="empresa" placeholder="Empresa (Caribe Tours…)" style="flex:1;min-width:120px">
+          <input type="text" name="guia" placeholder="Guía / #" style="flex:1;min-width:90px">
+          <button type="submit" style="padding:9px 13px;font-size:.82rem">🚚 Marcar enviado</button>
+        </div></form>` : ""}
+      </div>`;
   };
 
   const secciones = GRUPOS.map(g => {
@@ -1478,6 +1542,99 @@ self.addEventListener("fetch", e => {
     res.send(vistaDashboard(g.key, g.role, g.nombre));
   });
 
+  // ── Acciones sobre un pedido (solo jefa) ──
+  // Confirmar/rechazar usan EXACTAMENTE el mismo camino que cuando Winny escribe
+  // "confirmar +numero" por WhatsApp: misma factura, mismos avisos, cero lógica duplicada.
+  const aPedidos = (key, extra = "") => `/panel/pedidos?key=${encodeURIComponent(key)}${extra}`;
+
+  async function comando_dueña(texto) {
+    const { handle_owner_command } = await import("./handlers/messages.js");
+    return handle_owner_command({ text: texto });
+  }
+
+  app.post("/panel/pedido/confirmar", async (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    const phone = (req.body?.phone || "").toString().replace(/\D/g, "");
+    try {
+      await comando_dueña(`confirmar +${phone}`);
+      logger.info({ phone, quien: g.nombre }, "✅ Panel: pago confirmado desde Pedidos");
+      res.redirect(aPedidos(g.key, "&ok=" + encodeURIComponent("Pago confirmado. Le avisé a la clienta y le mandé la factura.")));
+    } catch (e) {
+      logger.error({ err: e.message, phone }, "Panel: error confirmando el pago");
+      res.redirect(aPedidos(g.key, "&err=" + encodeURIComponent("No pude confirmarlo: " + e.message)));
+    }
+  });
+
+  app.post("/panel/pedido/rechazar", async (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    const phone = (req.body?.phone || "").toString().replace(/\D/g, "");
+    try {
+      await comando_dueña(`rechazar +${phone}`);
+      res.redirect(aPedidos(g.key, "&ok=" + encodeURIComponent("Le avisé que su pago todavía no ha llegado.")));
+    } catch (e) {
+      res.redirect(aPedidos(g.key, "&err=" + encodeURIComponent("Error: " + e.message)));
+    }
+  });
+
+  app.post("/panel/pedido/enviado", async (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    const b = req.body || {};
+    const phone = (b.phone || "").toString();
+    const guia = (b.guia || "").toString().trim().slice(0, 60) || null;
+    const empresa = (b.empresa || "").toString().trim().slice(0, 60) || null;
+    try {
+      const id = set_shipping(phone, { guia, empresa });
+      if (!id) return res.redirect(aPedidos(g.key, "&err=" + encodeURIComponent("No encontré un pedido abierto de esa clienta.")));
+      const texto = `¡Tu pedido va en camino mi amor! 🚚💕` +
+        (empresa ? `\n📦 Va por *${empresa}*` : "") +
+        (guia ? `\n🔖 Guía: *${guia}*` : "") +
+        `\n\nCualquier cosa me escribes por aquí ✨`;
+      const sid = await send_text(phone, texto);
+      if (sid) save_out(phone, { type: "text", content: texto, sid, agent: g.nombre });
+      logger.info({ phone, empresa, guia, quien: g.nombre }, "🚚 Panel: pedido marcado como enviado");
+      res.redirect(aPedidos(g.key, "&ok=" + encodeURIComponent(
+        sid ? "Marcado como enviado y le avisé a la clienta." : "Marcado como enviado (no pude avisarle: pasaron 24h).")));
+    } catch (e) {
+      res.redirect(aPedidos(g.key, "&err=" + encodeURIComponent("Error: " + e.message)));
+    }
+  });
+
+  // ── RESPALDO (solo jefa) ──
+  app.get("/panel/respaldo", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    res.send(vistaRespaldo(g.key, g.role, g.nombre));
+  });
+
+  app.get("/panel/respaldo/csv/:tabla", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (g.role !== "jefa") return res.status(403).send("Solo para Winny.");
+    const clave = String(req.params.tabla);
+    const datos = exportar_csv(clave);
+    if (datos === null) return res.status(404).send("No encontré esos datos.");
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="winny-${clave}-${fecha_archivo()}.csv"`);
+    res.send(datos);
+  });
+
+  app.get("/panel/respaldo/db", async (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (g.role !== "jefa") return res.status(403).send("Solo para Winny.");
+    const tmp = path.join(config.receipts_dir, `respaldo-${Date.now()}.db`);
+    try {
+      await copiar_base(tmp);
+      res.download(tmp, `winny-respaldo-${fecha_archivo()}.db`, () => {
+        try { fs.unlinkSync(tmp); } catch { /* ya se borró */ }
+      });
+    } catch (e) {
+      logger.error({ err: e.message }, "Respaldo: no pude copiar la base");
+      res.status(500).send("No pude sacar la copia: " + e.message);
+    }
+  });
+
   // ── CAMPAÑAS (solo jefa) ──
   app.get("/panel/campanas", (req, res) => {
     const g = guard(req, res); if (!g) return;
@@ -1862,6 +2019,7 @@ self.addEventListener("fetch", e => {
   start_supervisor();
   start_layaway_poller();
   start_campaign_poller();
+  start_backup_poller();
 
   logger.info("🖥️  Panel v2 montado en /panel");
 }
