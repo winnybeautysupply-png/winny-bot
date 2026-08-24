@@ -315,10 +315,12 @@ body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;backgro
 header{background:var(--pink);color:#fff;padding:12px 16px;font-weight:700;position:sticky;top:0;z-index:9;
   display:flex;justify-content:space-between;align-items:center;gap:10px}
 header .rol{font-weight:500;font-size:.78rem;opacity:.9;background:rgba(255,255,255,.18);padding:3px 9px;border-radius:20px}
-.nav{display:flex;gap:6px;background:#fff;border-bottom:1px solid var(--line);padding:8px 12px;
-  position:sticky;top:44px;z-index:8;overflow-x:auto}
+/* Los botones del menú DAN LA VUELTA en vez de salirse de la pantalla:
+   antes, en el celular, "Campañas" y los de más allá quedaban escondidos. */
+.nav{display:flex;flex-wrap:wrap;gap:6px;background:#fff;border-bottom:1px solid var(--line);
+  padding:8px 12px;position:sticky;top:44px;z-index:8}
 .nav a{white-space:nowrap;color:var(--soft);text-decoration:none;font-size:.85rem;font-weight:600;
-  padding:6px 11px;border-radius:20px}
+  padding:7px 12px;border-radius:20px;background:#f5f5f7}
 .nav a.on{background:var(--pink-soft);color:var(--pink)}
 a{color:var(--pink);text-decoration:none}
 .wrap{max-width:1180px;margin:0 auto;padding:12px 14px 80px}
