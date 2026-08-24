@@ -945,6 +945,17 @@ function vistaCampanas(key, role, nombre, notice = "") {
       <p class="muted">📲 Todos los días a las 8pm te aviso por WhatsApp cómo va: cuántas salieron, cuántas te respondieron y si eso es bueno o malo.</p>
       ${formPrueba(key)}
     </div>
+    <div class="card">
+      <h3>📤 Mandarle algo a las que respondieron</h3>
+      <p class="muted" style="margin:0 0 8px">Escribe una vez y le llega a todas las que te contestaron. <b>No le llega dos veces a nadie:</b> a la que ya recibió ese mismo mensaje se la salta sola.</p>
+      <form method="post" action="/panel/campana/mensaje"
+            onsubmit="return confirm('¿Mandarle este mensaje a todas las que respondieron?')">
+        <input type="hidden" name="key" value="${esc(key)}">
+        <textarea name="msg" rows="5" placeholder="Ej: Amor, mira esta peluca 100% humana 26&quot; en RD$7,990…" required></textarea>
+        <button class="big" type="submit">Mandárselo a todas</button>
+      </form>
+      <p class="muted" style="margin:8px 0 0">Puedes pegar el link de un reel o de un video: le llega para que lo abra.</p>
+    </div>
     ${(() => {
       const r = respondieron_lista(activa.id);
       if (!r.length) return "";
@@ -1909,6 +1920,42 @@ self.addEventListener("fetch", e => {
     } catch (e) {
       res.redirect(atras + "&err=" + encodeURIComponent("Error: " + e.message));
     }
+  });
+
+  // Mandarle el MISMO mensaje a todas las que respondieron la campaña.
+  // Se salta a la que ya lo recibió: nadie recibe lo mismo dos veces.
+  app.post("/panel/campana/mensaje", async (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    const atras = `/panel/campanas?key=${encodeURIComponent(g.key)}`;
+    const texto = (req.body?.msg || "").toString().trim();
+    if (!texto) return res.redirect(atras + "&err=" + encodeURIComponent("Escribe el mensaje primero."));
+
+    const ca = campana_activa();
+    if (!ca) return res.redirect(atras + "&err=" + encodeURIComponent("No hay campaña activa."));
+
+    const gente = respondieron_lista(ca.id).slice(0, 100);
+    const yaLoTiene = db.prepare(`SELECT 1 AS x FROM messages
+      WHERE phone = ? AND direction = 'out' AND content = ? LIMIT 1`);
+
+    let enviados = 0, repetidas = 0, fallidas = 0;
+    for (const p of gente) {
+      if (yaLoTiene.get(p.phone, texto)) { repetidas++; continue; }
+      try {
+        const sid = await send_text(p.phone, texto);
+        if (sid) {
+          save_out(p.phone, { type: "text", content: texto, sid, agent: g.nombre });
+          mark_human_reply(p.phone);
+          enviados++;
+        } else { fallidas++; }
+      } catch { fallidas++; }
+      await new Promise(r => setTimeout(r, 2000)); // sin ráfagas
+    }
+    logger.info({ enviados, repetidas, fallidas, quien: g.nombre }, "📤 Mensaje a las que respondieron");
+    return res.redirect(atras + "&ok=" + encodeURIComponent(
+      `Enviado a ${enviados}.` +
+      (repetidas ? ` ${repetidas} ya lo tenían.` : "") +
+      (fallidas ? ` ${fallidas} no se pudo (pasaron 24h).` : "")));
   });
 
   app.post("/panel/campana/estado", (req, res) => {
