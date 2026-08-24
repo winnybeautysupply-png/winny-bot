@@ -623,7 +623,13 @@ function apartadosCard(phone, key) {
             <input type="hidden" name="phone" value="${esc(phone)}"><input type="hidden" name="estado" value="cancelado">
             <button class="grey" type="submit" style="padding:8px 12px;font-size:.78rem">Cancelar</button>
           </form>
-        </div>` : ""}
+        </div>` : `
+        <form method="post" action="/panel/apartado/borrar" style="margin-top:6px"
+              onsubmit="return confirm('¿Borrar este registro para siempre?')">
+          <input type="hidden" name="key" value="${esc(key)}"><input type="hidden" name="id" value="${a.id}">
+          <input type="hidden" name="phone" value="${esc(phone)}">
+          <button class="grey" type="submit" style="padding:7px 11px;font-size:.75rem">Borrar registro</button>
+        </form>`}
     </div>`;
   };
 
@@ -1084,6 +1090,16 @@ export function mount_panel(app) {
     const phone = (b.phone || "").toString();
     ampliar_plazo(parseInt(b.id, 10), monto(b.dias));
     res.redirect(volver(g.key, phone, "&ok=" + encodeURIComponent("Plazo extendido.")));
+  });
+
+  // Borrar de verdad (para apartados metidos por error). "Cancelar" deja el
+  // registro en el historial; esto lo elimina. Solo la jefa.
+  app.post("/panel/apartado/borrar", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    const phone = (req.body?.phone || "").toString();
+    borrar_apartado(parseInt(req.body?.id, 10));
+    res.redirect(volver(g.key, phone, "&ok=" + encodeURIComponent("Apartado borrado.")));
   });
 
   app.post("/panel/apartado/config", (req, res) => {
