@@ -704,8 +704,10 @@ export function mount_panel(app) {
   app.post("/panel/tomar", (req, res) => {
     const g = guard(req, res); if (!g) return;
     const phone = (req.body?.phone || "").toString();
+    // OJO: NO marcamos "un humano ya respondió" aquí — solo cuando de verdad se envía
+    // un mensaje. Así, si quien la tomó se distrae, el bot le manda "ya te consulto"
+    // a la clienta en vez de dejarla en visto (red de seguridad que ya existía).
     set_handoff(phone, 120);
-    mark_human_reply(phone);
     db.prepare("UPDATE contacts SET taken_by = ? WHERE phone = ?").run(g.role, phone);
     logger.info({ phone, rol: g.role }, "👤 Panel v2: conversación tomada por un humano");
     res.redirect(volver(g.key, phone, "&ok=" + encodeURIComponent("La estás atendiendo tú. Claude no le escribirá.")));
