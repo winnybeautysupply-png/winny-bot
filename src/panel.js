@@ -1544,7 +1544,7 @@ export function mount_panel(app) {
     }
     // Cada vez que entra con su clave, se renueva la sesión del celular.
     if (explicita) guardar_cookie(res, key);
-    return { key, role: yo.role, nombre: yo.nombre };
+    return { key, role: yo.role, nombre: yo.nombre, permisos: yo.permisos || [] };
   };
 
   // Corta el paso con un mensaje decente, no con un error feo.
