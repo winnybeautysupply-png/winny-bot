@@ -853,6 +853,44 @@ function apartadosCard(phone, key) {
 }
 
 // ─── Vista: INVENTARIO ───────────────────────────────────────────
+// Contar TODO de una vez: una sola pantalla con todos los productos y un
+// solo botón al final. Es como se cuenta de verdad en una tienda — recorriendo
+// el estante — no entrando y saliendo producto por producto.
+async function vistaConteo(key, role, nombre, permisos, notice = "") {
+  const k = encodeURIComponent(key);
+  let cat = [];
+  try { cat = (await get_catalog()).filter(p => p.nombre); } catch { cat = []; }
+  const stock = todo_el_stock();
+  cat.sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)));
+
+  const filas = cat.map(p => {
+    const s = stock.get(p.codigo);
+    return `<div style="display:flex;gap:10px;align-items:center;background:#fff;border:1px solid var(--line);
+                        border-radius:11px;padding:9px 11px;margin:6px 0">
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:600;font-size:.9rem">${esc(p.nombre)}</div>
+        <div class="muted" style="font-size:.75rem">#${esc(p.codigo)}${s ? ` · ahora: ${s.existencia}` : " · sin contar"}</div>
+      </div>
+      <input type="text" name="c_${esc(p.codigo)}" inputmode="numeric" value="${s ? s.existencia : ""}"
+             placeholder="—" style="width:70px;text-align:center;padding:10px;font-size:1.1rem;font-weight:700">
+    </div>`;
+  }).join("");
+
+  return shell("Contar inventario", `
+    <a href="/panel/inventario?key=${k}">← Inventario</a>
+    <h2 style="margin:8px 0 4px">📝 Contar todo</h2>
+    <p class="muted">Recorre tu estante y ve escribiendo cuántas tienes de cada una. <b>La que dejes en blanco no se toca.</b> Al final, un solo botón.</p>
+    ${notice}
+    <form method="post" action="/panel/inventario/conteo">
+      <input type="hidden" name="key" value="${esc(key)}">
+      ${filas || `<p class="muted">No hay productos en el catálogo.</p>`}
+      <button class="big" type="submit" style="position:sticky;bottom:10px;font-size:1.05rem;padding:15px">
+        Guardar todo el conteo
+      </button>
+    </form>
+  `, { key, role, nombre, permisos, activa: "inventario" });
+}
+
 async function vistaInventario(key, role, nombre, permisos, buscar = "", notice = "") {
   const k = encodeURIComponent(key);
   let cat = [];
@@ -915,7 +953,11 @@ async function vistaInventario(key, role, nombre, permisos, buscar = "", notice 
       <button type="submit">Buscar</button>
       ${buscar ? `<a class="pill tag" href="/panel/inventario?key=${k}">✕ quitar</a>` : ""}
     </form>
-    <p class="muted">Escribe cuántas <b>tienes</b> en la cajita y dale Guardar. Los botones −1 y +1 son para arreglos rápidos.</p>
+    <a class="item" href="/panel/inventario?key=${k}&modo=conteo"
+       style="background:var(--pink-soft);border-color:var(--pink);display:flex;justify-content:space-between;align-items:center">
+      <span><b>📝 Contar todo de una vez</b><br><span class="muted">Todos los productos en una sola pantalla</span></span>
+      <span class="pill urg">Empezar</span></a>
+    <p class="muted">O aquí abajo, uno por uno: escribe cuántas <b>tienes</b> y dale Guardar. Los botones −1 y +1 son para arreglos rápidos.</p>
     ${lista.length ? lista.map(fila).join("") : `<p class="muted">No encontré productos.</p>`}
     <p class="muted" style="margin-top:14px">Lo que marques como <b>agotado</b> el bot deja de ofrecerlo solo. Lo que nunca has contado se queda como estaba.</p>
   `, { key, role, nombre, permisos, activa: "inventario" });
@@ -2067,8 +2109,29 @@ self.addEventListener("fetch", e => {
     let notice = "";
     if (req.query.ok) notice = `<div class="notice">✅ ${esc(String(req.query.ok))}</div>`;
     if (req.query.err) notice = `<div class="notice err">⚠️ ${esc(String(req.query.err))}</div>`;
+    if (String(req.query.modo || "") === "conteo") {
+      return res.send(await vistaConteo(g.key, g.role, g.nombre, g.permisos, notice));
+    }
     res.send(await vistaInventario(g.key, g.role, g.nombre, g.permisos,
       (req.query.buscar || "").toString().trim().slice(0, 60), notice));
+  });
+
+  // Guardar el conteo completo de una vez.
+  app.post("/panel/inventario/conteo", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (!puede(g, "caja")) return sinPermiso(g, res, "el inventario");
+    const b = req.body || {};
+    let contados = 0;
+    for (const campo of Object.keys(b)) {
+      if (!campo.startsWith("c_")) continue;
+      const valor = String(b[campo] ?? "").replace(/[^\d]/g, "");
+      if (valor === "") continue; // en blanco = no se toca
+      ajustar(campo.slice(2), valor, { quien: g.nombre });
+      contados++;
+    }
+    logger.info({ contados, quien: g.nombre }, "📦 Conteo completo guardado");
+    res.redirect(`/panel/inventario?key=${encodeURIComponent(g.key)}&ok=` +
+      encodeURIComponent(contados ? `Listo, ${contados} producto(s) contados.` : "No escribiste ninguna cantidad."));
   });
 
   app.post("/panel/inventario/mover", (req, res) => {
