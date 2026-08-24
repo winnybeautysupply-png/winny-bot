@@ -1099,11 +1099,22 @@ async function handle_text(parsed, contact) {
   const history_rows = get_recent_messages(from, 24);
   const history = format_history(history_rows.slice(0, -1)); // excluir mensaje actual
 
+  // APARTADOS: si tiene algo apartado, el bot debe saber cuánto abonó y cuánto le
+  // falta. Se carga aparte y a prueba de fallos: si algo se rompe, el bot responde igual.
+  let layaway = "";
+  try {
+    const { contexto_apartado } = await import("../apartados.js");
+    layaway = contexto_apartado(from);
+  } catch (e) {
+    logger.debug({ err: e?.message }, "No se pudo leer el apartado de la clienta");
+  }
+
   const ctx = {
     is_open: is_business_open(),
     contact_name: contact?.name,
     purchase_history: summarize_orders(get_customer_orders(from, 6)),
-    client_summary: get_contact_summary(from) // ficha de memoria de largo plazo
+    client_summary: get_contact_summary(from), // ficha de memoria de largo plazo
+    layaway
   };
 
   // Llamar a Claude

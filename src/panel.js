@@ -25,6 +25,11 @@ import {
 import {
   analizar, start_supervisor, supervisor_encendido, set_setting, analisis_hoy, estado_supervisor
 } from "./supervisor.js";
+import {
+  crear_apartado, abonar, cambiar_estado, ampliar_plazo, borrar_apartado, get_apartado,
+  apartados_de, todos_apartados, pagos_de, resumen_apartados, phones_con_apartado,
+  plazo_dias, start_layaway_poller
+} from "./apartados.js";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
 
@@ -216,6 +221,7 @@ function shell(title, inner, { key = "", role = "", nombre = "", activa = "" } =
     <nav class="nav">
       <a class="${activa === "bandeja" ? "on" : ""}" href="/panel?key=${k}">📥 Bandeja</a>
       ${role === "empleada" ? `<a class="${activa === "mias" ? "on" : ""}" href="/panel?key=${k}&f=mias">👩 Mías</a>` : ""}
+      <a class="${activa === "apartados" ? "on" : ""}" href="/panel/apartados?key=${k}">🔖 Apartados</a>
       ${role === "jefa" ? `<a class="${activa === "dash" ? "on" : ""}" href="/panel/dashboard?key=${k}">📊 Números</a>` : ""}
       ${role === "jefa" ? `<a class="${activa === "equipo" ? "on" : ""}" href="/panel/equipo?key=${k}">👥 Equipo</a>` : ""}
       ${role === "jefa" ? `<a href="/pending?key=${k}">🧾 Pedidos abiertos</a>` : ""}
@@ -311,6 +317,7 @@ function vistaBandeja(key, role, nombre, filtro) {
   const n = contar(rows);
   const k = encodeURIComponent(key);
   const mias = rows.filter(r => r.assigned_to && r.assigned_to === nombre).length;
+  const conApartado = phones_con_apartado();
 
   let lista = rows;
   if (filtro === "mias") lista = rows.filter(r => r.assigned_to === nombre);
@@ -353,7 +360,10 @@ function vistaBandeja(key, role, nombre, filtro) {
       (r.atendida_por === "humano"
         ? `<span class="pill hum">👤 ${esc(r.taken_by || "humano")}</span>`
         : `<span class="pill ia">🤖 Claude</span>`) +
-      (r.assigned_to && r.assigned_to !== r.taken_by ? `<span class="pill tag">👩 ${esc(r.assigned_to)}</span>` : "") + tags;
+      (r.assigned_to && r.assigned_to !== r.taken_by ? `<span class="pill tag">👩 ${esc(r.assigned_to)}</span>` : "") +
+      (conApartado.has(r.phone)
+        ? `<span class="pill ${conApartado.get(r.phone).vencido ? "urg" : "amar"}">🔖 ${conApartado.get(r.phone).vencido ? "Apartado vencido" : `Apartado: faltan RD$${rd(conApartado.get(r.phone).balance)}`}</span>`
+        : "") + tags;
     return `<a class="item" href="/panel/chat?key=${k}&phone=${encodeURIComponent(r.phone)}">
       <span class="time">${esc(fmtTime(r.last_seen))}</span>
       <div class="n">${esc(disp)}</div>
@@ -458,6 +468,8 @@ function vistaChat(phone, key, role, nombre, { notice = "", productos = null, q 
     </form>
   </div>
 
+  ${apartadosCard(phone, key)}
+
   ${f.c.summary ? `<div class="card"><h3>🧠 Ficha que recuerda el bot</h3>
     <div class="muted" style="white-space:pre-wrap">${esc(f.c.summary)}</div></div>` : ""}`;
 
@@ -549,6 +561,145 @@ function vistaChat(phone, key, role, nombre, { notice = "", productos = null, q 
     </div>`, { key, role, nombre, activa: "bandeja" });
 }
 
+// ─── Apartados de una clienta (dentro del chat) ──────────────────
+function fechaCorta(ts) {
+  if (!ts) return "—";
+  try {
+    return new Date(ts).toLocaleDateString("es-DO",
+      { timeZone: "America/Santo_Domingo", day: "2-digit", month: "short" });
+  } catch { return "—"; }
+}
+
+function estadoApartado(a) {
+  if (a.estado === "entregado") return `<span class="pill hum">✅ Entregado</span>`;
+  if (a.estado === "cancelado") return `<span class="pill tag">Cancelado</span>`;
+  if (a.pagado_completo) return `<span class="pill hum">💚 Pagado — falta entregar</span>`;
+  if (a.vencido) return `<span class="pill urg">⚠️ Vencido ${fechaCorta(a.fecha_limite)}</span>`;
+  if (a.por_vencer) return `<span class="pill rojo">⏰ Vence ${fechaCorta(a.fecha_limite)}</span>`;
+  return `<span class="pill amar">🔖 Hasta ${fechaCorta(a.fecha_limite)}</span>`;
+}
+
+function apartadosCard(phone, key) {
+  const lista = apartados_de(phone);
+  const activos = lista.filter(a => a.estado === "activo");
+  const viejos = lista.filter(a => a.estado !== "activo");
+
+  const bloque = a => {
+    const pagos = pagos_de(a.id);
+    return `<div style="border:1px solid var(--line);border-radius:12px;padding:11px;margin:8px 0">
+      <div style="font-weight:700">${esc(a.producto)}</div>
+      <div style="margin:5px 0">${estadoApartado(a)}</div>
+      <div class="kv"><span>Total</span><b>RD$${rd(a.total)}</b></div>
+      <div class="kv"><span>Abonado</span><b>RD$${rd(a.abonado)}</b></div>
+      <div class="kv"><span>Le falta</span><b style="color:${a.balance > 0 ? "#b3261e" : "#1e6b32"}">RD$${rd(a.balance)}</b></div>
+      ${pagos.length ? `<details style="margin-top:6px"><summary>Ver ${pagos.length} abono(s)</summary>
+        ${pagos.map(p => `<div class="kv"><span>${esc(fmtTime(p.ts))}${p.metodo ? ` · ${esc(p.metodo)}` : ""}</span><b>RD$${rd(p.monto)}</b></div>`).join("")}
+      </details>` : ""}
+      ${a.notas ? `<p class="muted" style="margin:6px 0 0">${esc(a.notas)}</p>` : ""}
+      ${a.estado === "activo" ? `
+        <form method="post" action="/panel/apartado/abonar" style="margin-top:8px">
+          <input type="hidden" name="key" value="${esc(key)}"><input type="hidden" name="id" value="${a.id}">
+          <input type="hidden" name="phone" value="${esc(phone)}">
+          <div class="row">
+            <input type="text" name="monto" inputmode="numeric" placeholder="Abono RD$" style="flex:1;min-width:100px">
+            <input type="text" name="metodo" placeholder="efectivo / transf." style="flex:1;min-width:110px">
+            <button type="submit" style="padding:9px 14px;font-size:.82rem">Abonar</button>
+          </div>
+        </form>
+        <div class="row">
+          <form method="post" action="/panel/apartado/estado">
+            <input type="hidden" name="key" value="${esc(key)}"><input type="hidden" name="id" value="${a.id}">
+            <input type="hidden" name="phone" value="${esc(phone)}"><input type="hidden" name="estado" value="entregado">
+            <button class="ghost" type="submit" style="padding:8px 12px;font-size:.78rem">✅ Entregado</button>
+          </form>
+          <form method="post" action="/panel/apartado/plazo">
+            <input type="hidden" name="key" value="${esc(key)}"><input type="hidden" name="id" value="${a.id}">
+            <input type="hidden" name="phone" value="${esc(phone)}"><input type="hidden" name="dias" value="7">
+            <button class="grey" type="submit" style="padding:8px 12px;font-size:.78rem">+7 días</button>
+          </form>
+          <form method="post" action="/panel/apartado/estado"
+                onsubmit="return confirm('¿Cancelar este apartado?')">
+            <input type="hidden" name="key" value="${esc(key)}"><input type="hidden" name="id" value="${a.id}">
+            <input type="hidden" name="phone" value="${esc(phone)}"><input type="hidden" name="estado" value="cancelado">
+            <button class="grey" type="submit" style="padding:8px 12px;font-size:.78rem">Cancelar</button>
+          </form>
+        </div>` : ""}
+    </div>`;
+  };
+
+  return `<div class="card">
+    <h3>🔖 Apartados</h3>
+    ${activos.map(bloque).join("") || `<p class="muted">No tiene nada apartado.</p>`}
+    ${viejos.length ? `<details><summary>Historial (${viejos.length})</summary>${viejos.map(bloque).join("")}</details>` : ""}
+    <details style="margin-top:8px">
+      <summary>➕ Apartar una peluca</summary>
+      <form method="post" action="/panel/apartado/nuevo" style="margin-top:8px">
+        <input type="hidden" name="key" value="${esc(key)}"><input type="hidden" name="phone" value="${esc(phone)}">
+        <input type="text" name="producto" placeholder="Qué apartó (ej: Peluca ondulada 26&quot;)" required>
+        <div class="row">
+          <input type="text" name="total" inputmode="numeric" placeholder="Precio total RD$" required style="flex:1;min-width:110px">
+          <input type="text" name="abono" inputmode="numeric" placeholder="Abono de hoy RD$" style="flex:1;min-width:110px">
+        </div>
+        <div class="row">
+          <input type="text" name="dias" inputmode="numeric" value="${plazo_dias()}" style="flex:1;min-width:80px">
+          <span class="muted" style="flex:2">días de plazo</span>
+        </div>
+        <input type="text" name="notas" placeholder="Nota (color, largo, acuerdo…)">
+        <button class="big" type="submit">Guardar apartado</button>
+      </form>
+    </details>
+  </div>`;
+}
+
+// ─── Vista: APARTADOS (todas) ────────────────────────────────────
+function vistaApartados(key, role, nombre, filtro, notice = "") {
+  const k = encodeURIComponent(key);
+  const r = resumen_apartados();
+  const lista = todos_apartados(filtro === "historial" ? "todos" : "activo")
+    .filter(a => filtro === "historial" ? a.estado !== "activo" : true);
+
+  const orden = { vencido: 0, listo: 1, por_vencer: 2, normal: 3 };
+  const cat = a => a.vencido ? "vencido" : a.pagado_completo ? "listo" : a.por_vencer ? "por_vencer" : "normal";
+  lista.sort((a, b) => (orden[cat(a)] - orden[cat(b)]) || ((a.fecha_limite || 0) - (b.fecha_limite || 0)));
+
+  const filas = lista.map(a => `<a class="item" href="/panel/chat?key=${k}&phone=${encodeURIComponent(a.phone)}">
+      <span class="time">${esc(fechaCorta(a.fecha_limite))}</span>
+      <div class="n">${esc(a.nombre || a.phone)}</div>
+      <div style="margin:5px 0">${estadoApartado(a)}</div>
+      <div class="p">${esc(a.producto)} — falta <b>RD$${rd(a.balance)}</b> de RD$${rd(a.total)}</div></a>`).join("");
+
+  const t = (num, txt) => `<div class="tile"><b>${num}</b><span>${txt}</span></div>`;
+
+  return shell("Apartados", `
+    <h2 style="margin:4px 0 10px">🔖 Apartados</h2>
+    ${notice}
+    <div class="tiles">
+      ${t(r.cantidad, "🔖 Activos")}
+      ${t("RD$" + rd(r.por_cobrar), "💵 Por cobrar")}
+      ${t("RD$" + rd(r.cobrado), "✅ Ya abonado")}
+      ${t(r.vencidos, "⚠️ Vencidos")}
+      ${t(r.listos, "💚 Pagados sin entregar")}
+    </div>
+    <div class="row" style="margin-bottom:6px">
+      <a class="pill ${filtro !== "historial" ? "hum" : "tag"}" href="/panel/apartados?key=${k}">Activos</a>
+      <a class="pill ${filtro === "historial" ? "hum" : "tag"}" href="/panel/apartados?key=${k}&f=historial">Historial</a>
+    </div>
+    ${filas || `<p class="muted">Nada por aquí.</p>`}
+    ${role === "jefa" ? `<div class="card" style="margin-top:14px">
+      <h3>⚙️ Plazo por defecto</h3>
+      <form method="post" action="/panel/apartado/config">
+        <input type="hidden" name="key" value="${esc(key)}">
+        <div class="row">
+          <input type="text" name="dias" inputmode="numeric" value="${plazo_dias()}" style="flex:1;min-width:90px">
+          <button type="submit">Guardar</button>
+        </div>
+      </form>
+      <p class="muted" style="margin:8px 0 0">Días que dura un apartado nuevo. El recordatorio sale 3 días antes y el día que vence.</p>
+    </div>` : ""}
+    <p class="muted">Para apartar algo, entra a la conversación de la clienta y usa «➕ Apartar una peluca».</p>
+  `, { key, role, nombre, activa: "apartados" });
+}
+
 // ─── Vista: DASHBOARD (solo jefa) ────────────────────────────────
 function vistaDashboard(key, role, nombre) {
   const desde = inicioDelDia();
@@ -572,6 +723,7 @@ function vistaDashboard(key, role, nombre) {
 
   const rows = inbox_rows();
   const n = contar(rows);
+  const ap = resumen_apartados();
   const conv = convos ? Math.round(((pedidosHoy.n || 0) / convos) * 100) : 0;
 
   const t = (num, txt) => `<div class="tile"><b>${num}</b><span>${txt}</span></div>`;
@@ -605,6 +757,14 @@ function vistaDashboard(key, role, nombre) {
       ${t(porConfirmar, "⚠️ Pagos por confirmar")}
       ${t(porEnviar, "📦 Pedidos por enviar")}
       ${t(n.humano, "👤 En manos humanas")}
+    </div>
+    <h3 style="margin:16px 0 8px">🔖 Apartados</h3>
+    <div class="tiles">
+      ${t(ap.cantidad, "🔖 Activos")}
+      ${t("RD$" + rd(ap.por_cobrar), "💵 Por cobrar")}
+      ${t("RD$" + rd(ap.cobrado), "✅ Ya abonado")}
+      ${t(ap.vencidos, "⚠️ Vencidos")}
+      ${t(ap.listos, "💚 Pagados sin entregar")}
     </div>
     <h3 style="margin:16px 0 8px">👥 Quién trabajó hoy</h3>
     ${tablaProductividad(desde)}
@@ -770,6 +930,82 @@ export function mount_panel(app) {
     const g = guard(req, res); if (!g) return;
     if (soloJefa(g, res)) return;
     res.send(vistaDashboard(g.key, g.role, g.nombre));
+  });
+
+  // ── APARTADOS ──
+  app.get("/panel/apartados", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    let notice = "";
+    if (req.query.ok) notice = `<div class="notice">✅ ${esc(String(req.query.ok))}</div>`;
+    if (req.query.err) notice = `<div class="notice err">⚠️ ${esc(String(req.query.err))}</div>`;
+    res.send(vistaApartados(g.key, g.role, g.nombre, (req.query.f || "").toString(), notice));
+  });
+
+  // Solo dígitos: la gente escribe "8,000", "RD$8000" o "8.000".
+  const monto = v => Number(String(v ?? "").replace(/[^\d]/g, ""));
+
+  app.post("/panel/apartado/nuevo", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    const b = req.body || {};
+    const phone = (b.phone || "").toString();
+    try {
+      crear_apartado({
+        phone,
+        producto: (b.producto || "").toString().trim().slice(0, 200),
+        total: monto(b.total),
+        abono: monto(b.abono),
+        dias: monto(b.dias) || null,
+        notas: (b.notas || "").toString().trim().slice(0, 500) || null,
+        por: g.nombre
+      });
+      res.redirect(volver(g.key, phone, "&ok=" + encodeURIComponent("Apartado guardado.")));
+    } catch (e) {
+      res.redirect(volver(g.key, phone, "&err=" + encodeURIComponent(e.message)));
+    }
+  });
+
+  app.post("/panel/apartado/abonar", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    const b = req.body || {};
+    const phone = (b.phone || "").toString();
+    try {
+      const a = abonar(parseInt(b.id, 10), {
+        monto: monto(b.monto),
+        metodo: (b.metodo || "").toString().trim().slice(0, 40) || null,
+        por: g.nombre
+      });
+      const msg = a && a.balance <= 0
+        ? "Abono registrado — ¡ya está pagado completo! 💚"
+        : `Abono registrado. Le faltan RD$${rd(a ? a.balance : 0)}.`;
+      logger.info({ id: b.id, phone, quien: g.nombre }, "🔖 Abono registrado");
+      res.redirect(volver(g.key, phone, "&ok=" + encodeURIComponent(msg)));
+    } catch (e) {
+      res.redirect(volver(g.key, phone, "&err=" + encodeURIComponent(e.message)));
+    }
+  });
+
+  app.post("/panel/apartado/estado", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    const b = req.body || {};
+    const phone = (b.phone || "").toString();
+    cambiar_estado(parseInt(b.id, 10), (b.estado || "").toString());
+    res.redirect(volver(g.key, phone, "&ok=" + encodeURIComponent("Apartado actualizado.")));
+  });
+
+  app.post("/panel/apartado/plazo", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    const b = req.body || {};
+    const phone = (b.phone || "").toString();
+    ampliar_plazo(parseInt(b.id, 10), monto(b.dias));
+    res.redirect(volver(g.key, phone, "&ok=" + encodeURIComponent("Plazo extendido.")));
+  });
+
+  app.post("/panel/apartado/config", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    const d = monto(req.body?.dias);
+    if (d > 0) set_setting("apartado_dias", String(d));
+    res.redirect(`/panel/apartados?key=${encodeURIComponent(g.key)}&ok=` + encodeURIComponent("Plazo guardado."));
   });
 
   // ── EQUIPO (solo jefa) ──
@@ -976,6 +1212,7 @@ export function mount_panel(app) {
   // El supervisor de IA vive dentro del panel: si el panel no carga, tampoco
   // arranca él, y el bot sigue atendiendo igual.
   start_supervisor();
+  start_layaway_poller();
 
   logger.info("🖥️  Panel v2 montado en /panel");
 }

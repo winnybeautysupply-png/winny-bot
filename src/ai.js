@@ -426,6 +426,12 @@ export async function generate_response(user_message, history = [], ctx = {}) {
     ? `\n\n[NOTA INTERNA — FICHA DE LA CLIENTA (memoria de conversaciones anteriores, incluso de hace semanas):\n${ctx.client_summary}\nUsa esta ficha como si lo recordaras tú: no le pidas datos que ya están aquí, retoma acuerdos pendientes con naturalidad y no la hagas repetir su historia.]`
     : "";
 
+  // Inyectar los APARTADOS activos: cuánto abonó, cuánto le falta y hasta cuándo tiene.
+  // Así el bot contesta "te faltan RD$5,000" con el número real, sin inventarlo.
+  const layaway_text = ctx.layaway
+    ? `\n\n[NOTA INTERNA — APARTADO(S) DE ESTA CLIENTA:\n${ctx.layaway}\nSi pregunta cuánto le falta, cuánto abonó o hasta cuándo tiene para pagar, dale ESTOS números exactos. NUNCA inventes montos ni fechas de apartados. Si ya lo pagó completo, coordina la entrega o el envío. Si el plazo se venció, trátala con cariño: dile que se lo puedes extender unos días y escala a Winny.]`
+    : "";
+
   const messages = [
     ...history.map(m => ({ role: m.role, content: m.content })),
     { role: "user", content: user_message }
@@ -458,7 +464,7 @@ export async function generate_response(user_message, history = [], ctx = {}) {
       model: config.claude.model,
       max_tokens: 600,
       temperature: 0.7,
-      system: SYSTEM_PROMPT + catalog_text + faq_text + ctx_text + name_text + history_text + memory_text,
+      system: SYSTEM_PROMPT + catalog_text + faq_text + ctx_text + name_text + history_text + memory_text + layaway_text,
       tools: TOOLS,
       messages
     });
