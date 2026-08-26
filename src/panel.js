@@ -352,14 +352,26 @@ a{color:var(--pink);text-decoration:none}
 .kv{display:flex;justify-content:space-between;gap:10px;padding:4px 0;font-size:.88rem;border-bottom:1px dashed #f0f0f4}
 .kv:last-child{border:0}
 .kv span{color:var(--soft)}
-.chat{background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px}
-.msg{max-width:82%;padding:8px 12px;border-radius:14px;margin:6px 0;white-space:pre-wrap;word-wrap:break-word;
-  font-size:.93rem;line-height:1.4;clear:both}
-.in{background:#f2f3f5;float:left;border-bottom-left-radius:4px}
-.out{background:#dcf8c6;float:right;border-bottom-right-radius:4px}
+/* ── Chat estilo WhatsApp ── fondo de papel, burbujas con colita y la
+   hora dentro de la burbuja, como en el teléfono. */
+.chat{background:#efeae2;border:1px solid #e2ddd5;border-radius:14px;padding:14px 12px 6px;
+  background-image:radial-gradient(#e6ddd2 1px,transparent 1px);background-size:22px 22px}
+.msg{position:relative;max-width:78%;padding:7px 10px 6px;border-radius:9px;margin:3px 0 8px;
+  white-space:pre-wrap;word-wrap:break-word;font-size:.94rem;line-height:1.38;clear:both;
+  box-shadow:0 1px 1px rgba(0,0,0,.13)}
+.in{background:#fff;float:left;border-top-left-radius:2px}
+.out{background:#d9fdd3;float:right;border-top-right-radius:2px}
 .out.hum{background:#cfe8ff}
-.msg img,.msg video{max-width:100%;border-radius:9px;display:block;margin-top:5px}
-.meta{font-size:.66rem;color:#98a0ab;margin-top:3px;text-align:right}
+/* la colita del globo */
+.msg:before{content:"";position:absolute;top:0;width:9px;height:13px}
+.in:before{left:-8px;background:radial-gradient(circle at 100% 0,transparent 9px,#fff 9px)}
+.out:before{right:-8px;background:radial-gradient(circle at 0 0,transparent 9px,#d9fdd3 9px)}
+.out.hum:before{background:radial-gradient(circle at 0 0,transparent 9px,#cfe8ff 9px)}
+.msg img,.msg video{max-width:100%;border-radius:7px;display:block;margin-top:5px}
+.meta{font-size:.63rem;color:#667781;margin:2px 0 -2px;text-align:right;white-space:nowrap}
+/* La cajita de escribir se queda pegada abajo, como en WhatsApp */
+.componer{position:sticky;bottom:0;z-index:6;background:var(--bg);
+  padding-top:8px;box-shadow:0 -8px 12px -8px rgba(0,0,0,.18)}
 .clear{clear:both}
 .dia{clear:both;text-align:center;margin:14px 0 6px;font-size:.72rem;color:#7a828e;font-weight:700}
 .dia:before,.dia:after{content:"";display:inline-block;width:22%;height:1px;background:var(--line);
@@ -732,7 +744,8 @@ function vistaChat(phone, key, role, nombre, { notice = "", productos = null, q 
   </div>`;
 
   const responder = esIG ? `<p class="muted">Los mensajes de Instagram todavía no se responden desde aquí.</p>` : `
-    <form class="card" method="post" action="/panel/reply" enctype="multipart/form-data">
+    <div class="componer">
+    <form class="card" method="post" action="/panel/reply" enctype="multipart/form-data" style="margin-bottom:8px">
       <h3>💬 Responder como Winny</h3>
       <input type="hidden" name="key" value="${esc(key)}">
       <input type="hidden" name="phone" value="${esc(phone)}">
@@ -744,7 +757,7 @@ function vistaChat(phone, key, role, nombre, { notice = "", productos = null, q 
         <button type="submit">Enviar 💬</button>
       </div>
       <p class="muted" style="margin:8px 0 0">Si su último mensaje tiene más de 24 h, WhatsApp puede rechazar el envío.</p>
-    </form>`;
+    </form></div>`;
 
   return shell(disp, `
     <a href="/panel?key=${k}">← Bandeja</a>
