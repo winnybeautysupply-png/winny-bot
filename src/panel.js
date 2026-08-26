@@ -445,9 +445,13 @@ function vistaBandeja(key, role, nombre, filtro, buscar = "", permisos = []) {
   let lista = rows;
   if (buscar) {
     const b = buscar.toLowerCase();
+    // OJO: los dígitos solo se comparan si de verdad escribió números. Sin esto,
+    // buscar un nombre dejaba la parte del teléfono en "" y "".includes("") es
+    // SIEMPRE true → devolvía las 298 conversaciones como si no hubiera filtro.
+    const digitos = b.replace(/\D/g, "");
     lista = rows.filter(r =>
       (r.name || "").toLowerCase().includes(b) ||
-      (r.phone || "").includes(b.replace(/\D/g, "")) ||
+      (digitos.length >= 3 && (r.phone || "").includes(digitos)) ||
       (r.last_text || "").toLowerCase().includes(b));
   }
   else if (filtro === "campana") lista = rows.filter(r => respondieronCampana.has(r.phone));
