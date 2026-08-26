@@ -1057,7 +1057,11 @@ function vistaCampanas(key, role, nombre, notice = "") {
     const tasa = c.enviados ? Math.round((c.respondieron / c.enviados) * 100) : 0;
     return `<div class="card">
       <h3>📣 Campaña en curso</h3>
-      <div style="font-weight:700;font-size:1.05rem">${esc(activa.nombre)}</div>
+      <form method="post" action="/panel/campana/nombre" class="row" style="margin-bottom:6px">
+        <input type="hidden" name="key" value="${esc(key)}"><input type="hidden" name="id" value="${activa.id}">
+        <input type="text" name="nombre" value="${esc(activa.nombre)}" style="flex:1;min-width:150px;font-weight:700">
+        <button class="ghost" type="submit" style="padding:8px 12px;font-size:.78rem">Renombrar</button>
+      </form>
       <div class="muted" style="margin-bottom:8px">${esc(activa.audiencia)} · ${activa.por_dia} por día</div>
       <div style="background:#eee;border-radius:20px;height:10px;overflow:hidden;margin:10px 0">
         <div style="width:${pct}%;height:100%;background:var(--pink)"></div>
@@ -2120,6 +2124,21 @@ self.addEventListener("fetch", e => {
       `Enviado a ${enviados}.` +
       (repetidas ? ` ${repetidas} ya lo tenían.` : "") +
       (fallidas ? ` ${fallidas} no se pudo (pasaron 24h).` : "")));
+  });
+
+  // Cambiarle el nombre a una campaña (o arreglarlo si quedó mal escrito).
+  app.post("/panel/campana/nombre", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    const nombre = (req.body?.nombre || "").toString().trim().slice(0, 60);
+    const id = parseInt(req.body?.id, 10);
+    if (nombre && id) {
+      db.prepare("UPDATE campaigns SET nombre = ? WHERE id = ?").run(nombre, id);
+      // Las etiquetas ya guardadas en el historial también se corrigen.
+      db.prepare(`UPDATE messages SET agent = ? WHERE source = 'campana' AND agent IS NOT NULL
+                  AND agent IN (SELECT nombre FROM campaigns WHERE id = ?)`).run(nombre, id);
+    }
+    res.redirect(`/panel/campanas?key=${encodeURIComponent(g.key)}&ok=` + encodeURIComponent("Nombre actualizado."));
   });
 
   app.post("/panel/campana/estado", (req, res) => {
