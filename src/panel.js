@@ -658,7 +658,16 @@ function vistaChat(phone, key, role, nombre, { notice = "", productos = null, q 
   ${apartadosCard(phone, key)}
 
   ${f.c.summary ? `<div class="card"><h3>🧠 Ficha que recuerda el bot</h3>
-    <div class="muted" style="white-space:pre-wrap">${esc(f.c.summary)}</div></div>` : ""}`;
+    <div class="muted" style="white-space:pre-wrap">${esc(f.c.summary)}</div></div>` : ""}
+
+  ${role === "jefa" ? `<div class="card">
+    <h3>🗑️ Borrar</h3>
+    <p class="muted" style="margin:0 0 8px">Para spam o números equivocados. Se borra la conversación completa y no se puede recuperar.</p>
+    <form method="post" action="/panel/borrar-conversacion"
+          onsubmit="return confirm('¿Borrar para siempre la conversación con ${esc(disp)}?')">
+      <input type="hidden" name="key" value="${esc(key)}"><input type="hidden" name="phone" value="${esc(phone)}">
+      <button class="grey" type="submit" style="padding:8px 13px;font-size:.8rem">Borrar esta conversación</button>
+    </form></div>` : ""}`;
 
   // ── A quién le toca esta clienta ──
   const equipo = list_employees(false);
@@ -2504,6 +2513,23 @@ self.addEventListener("fetch", e => {
   });
 
   // ── Notas y etiquetas ──
+  // Borrar una conversación completa (spam, número equivocado, prueba).
+  // Solo la jefa, y se lleva los mensajes con ella.
+  app.post("/panel/borrar-conversacion", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    const phone = (req.body?.phone || "").toString();
+    if (!phone) return res.redirect(`/panel?key=${encodeURIComponent(g.key)}`);
+    try {
+      db.prepare("DELETE FROM messages WHERE phone = ?").run(phone);
+      db.prepare("DELETE FROM contacts WHERE phone = ?").run(phone);
+      logger.info({ phone, quien: g.nombre }, "🗑️ Conversación borrada desde el panel");
+      res.redirect(`/panel?key=${encodeURIComponent(g.key)}&buscar=`);
+    } catch (e) {
+      res.redirect(volver(g.key, phone, "&err=" + encodeURIComponent("No pude borrarla: " + e.message)));
+    }
+  });
+
   app.post("/panel/cumple", (req, res) => {
     const g = guard(req, res); if (!g) return;
     const phone = (req.body?.phone || "").toString();
