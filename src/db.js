@@ -385,3 +385,17 @@ export function last_channel_invite(phone) {
 export function mark_channel_invite(phone) {
   db.prepare("UPDATE contacts SET channel_invited_at = ? WHERE phone = ?").run(Date.now(), phone);
 }
+
+// ─── Número personal de Winny: pasarlo máximo una vez cada 24h ──
+try { db.exec("ALTER TABLE contacts ADD COLUMN personal_invited_at INTEGER DEFAULT 0"); } catch { /* ya existe */ }
+
+export function last_personal_invite(phone) {
+  try {
+    return db.prepare("SELECT personal_invited_at FROM contacts WHERE phone = ?").get(phone)?.personal_invited_at || 0;
+  } catch { return 0; }
+}
+export function mark_personal_invite(phone) {
+  try {
+    db.prepare("UPDATE contacts SET personal_invited_at = ? WHERE phone = ?").run(Date.now(), phone);
+  } catch { /* no crítico */ }
+}

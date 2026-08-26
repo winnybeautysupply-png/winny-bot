@@ -13,7 +13,7 @@ import {
 import {
   upsert_contact, save_message, get_recent_messages,
   set_handoff, is_handed_off, clear_handoff, mark_human_reply, mark_handoff_hold, get_handoff_state,
-  last_channel_invite, mark_channel_invite,
+  last_channel_invite, mark_channel_invite, last_personal_invite, mark_personal_invite,
   get_active_order, create_order, update_order,
   get_pending_verification, get_latest_pending_verification,
   get_customer_orders, set_shipping,
@@ -1269,11 +1269,35 @@ async function handle_text(parsed, contact) {
     });
   }
 
+  // ═══ Número personal de Winny ════════════════════════════════
+  // Winny quiere atender ella misma mientras tanto: a toda clienta que escriba
+  // se le pasa su número directo, una vez cada 24h. Si esto sale, NO se manda
+  // también la invitación al canal en el mismo rato: son dos links seguidos y
+  // cansa. Se apaga poniendo PASAR_PERSONAL=off en Render.
+  let paso_personal = false;
+  try {
+    const personal_on = process.env.PASAR_PERSONAL !== "off";
+    if (personal_on && !from.startsWith("ig:")
+        && Date.now() - last_personal_invite(from) > 24 * 60 * 60 * 1000) {
+      const aviso =
+        "Por cierto amor 💕 escríbeme directo a mi número y te atiendo yo misma:\n" +
+        "📲 849-621-9899\nhttps://wa.me/18496219899";
+      const av_id = await send_text(from, aviso);
+      if (av_id) {
+        save_message({ phone: from, direction: "out", type: "text", content: aviso, wa_message_id: av_id });
+        mark_personal_invite(from);
+        paso_personal = true;
+      }
+    }
+  } catch (e) {
+    logger.error({ err: e?.message, from }, "Fallo pasando el número personal");
+  }
+
   // ═══ Invitación DIARIA al canal de ofertas ═══════════════════
   // Si la clienta escribió hoy y no ha recibido la invitación en las últimas 24h,
   // se la mandamos después de la respuesta (una vez al día máximo, solo WhatsApp).
   try {
-    if (!from.startsWith("ig:") && Date.now() - last_channel_invite(from) > 24 * 60 * 60 * 1000) {
+    if (!paso_personal && !from.startsWith("ig:") && Date.now() - last_channel_invite(from) > 24 * 60 * 60 * 1000) {
       const invite =
         "Por cierto amor 💕 sígueme en mi canal de OFERTAS de WhatsApp, ahí publico primero los especiales y las novedades de Winny Beauty Supply 🛍️✨\nhttps://whatsapp.com/channel/0029VbD45yUEAKWGRrM6i73Z";
       const inv_id = await send_text(from, invite);
