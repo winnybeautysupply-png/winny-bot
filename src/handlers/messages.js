@@ -1279,13 +1279,18 @@ async function handle_text(parsed, contact) {
     const personal_on = process.env.PASAR_PERSONAL !== "off";
     if (personal_on && !from.startsWith("ig:")
         && Date.now() - last_personal_invite(from) > 24 * 60 * 60 * 1000) {
+      // Las DOS cosas en UN solo mensaje: el número directo y el canal de
+      // ofertas. Dos mensajes seguidos con links se ven a spam.
       const aviso =
         "Por cierto amor 💕 escríbeme directo a mi número y te atiendo yo misma:\n" +
-        "📲 849-621-9899\nhttps://wa.me/18496219899";
+        "📲 849-621-9899\nhttps://wa.me/18496219899\n\n" +
+        "Y sígueme en mi canal de OFERTAS, ahí publico primero los especiales y las novedades 🛍️✨\n" +
+        "https://whatsapp.com/channel/0029VbD45yUEAKWGRrM6i73Z";
       const av_id = await send_text(from, aviso);
       if (av_id) {
         save_message({ phone: from, direction: "out", type: "text", content: aviso, wa_message_id: av_id });
         mark_personal_invite(from);
+        mark_channel_invite(from); // el canal ya va aquí dentro: que no se mande aparte
         paso_personal = true;
       }
     }
