@@ -51,6 +51,7 @@ import {
   TABLAS, exportar_csv, copiar_base, conteos, respaldos_guardados,
   fecha_archivo, start_backup_poller
 } from "./respaldo.js";
+import { start_sender_watch, revisar_segundo_numero } from "./sender_watch.js";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
 
@@ -2431,6 +2432,18 @@ self.addEventListener("fetch", e => {
     res.redirect(aEquipo(g.key, "&ok=" + encodeURIComponent("Cuenta borrada.")));
   });
 
+  // ── Estado del 2do número (solo jefa) ──
+  app.get("/panel/segundo-numero", async (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (g.role !== "jefa") return res.status(403).json({ error: "solo la jefa" });
+    try {
+      const estado = await revisar_segundo_numero();
+      res.json({ numero: "+18293839433", estado: estado || "no encontrado" });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ── Diagnóstico del supervisor (solo jefa) ──
   app.get("/panel/estado", (req, res) => {
     const g = guard(req, res); if (!g) return;
@@ -2618,6 +2631,7 @@ self.addEventListener("fetch", e => {
   start_layaway_poller();
   start_campaign_poller();
   start_backup_poller();
+  start_sender_watch();
 
   logger.info("🖥️  Panel v2 montado en /panel");
 }
