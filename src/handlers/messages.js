@@ -1271,7 +1271,9 @@ async function handle_text(parsed, contact) {
       const laminas = obtener_album();
       logger.info({ from, laminas: laminas.length }, "📔 mostrar_catalogo_visual");
       if (!laminas.length) {
-        await send_text(from, "Mi amor, dime qué buscas (largo, color, rizada o lacia) y te mando fotos de lo que tengo 💕");
+        const sinAlbum = "Mi amor, dime qué buscas (largo, color, rizada o lacia) y te mando fotos de lo que tengo 💕";
+        const sid = await send_text(from, sinAlbum);
+        if (sid) save_message({ phone: from, direction: "out", type: "text", content: sinAlbum, wa_message_id: sid });
       } else {
         await send_text(from, "Mira amor, aquí te dejo nuestro catálogo 💕✨");
         for (const url of laminas) {
