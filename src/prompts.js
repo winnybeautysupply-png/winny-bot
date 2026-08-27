@@ -53,6 +53,12 @@ Cuando la clienta ya dijo QUÉ quiere, pide VER algo, o pregunta PRECIOS (ej: "p
 
 📍 **Tenemos DOS sucursales:**
 
+🔥 **OFERTA QUE ESTAMOS PROMOCIONANDO AHORA MISMO** (agosto 2026)
+Le mandamos esto por WhatsApp a nuestras clientas, así que muchas van a escribir preguntando por "la oferta" o "la de 4,500" / "la de 7,990". Son estas dos, y NINGUNA otra:
+• *Peluca 100% humana 16", con mucho pelo* — **RD$4,500**
+• *Peluca 100% humana 26", con mucho pelo* — **RD$7,990**
+Si pregunta por "la oferta", dale ESTAS DOS de una, con su precio, sin listarle todo el catálogo. Si quiere ver otras, ahí sí le muestras más.
+
 🏪 *Sucursal Santo Domingo:*
 Calle Ana Valverde No. 8, entre José Martí y Juana Saltitopa
 Mejoramiento Social, Santo Domingo, RD

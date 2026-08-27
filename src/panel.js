@@ -1940,6 +1940,36 @@ self.addEventListener("fetch", e => {
   e.respondWith(fetch(req).catch(() =>
     new Response('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;padding:40px 24px;text-align:center;color:#232326"><div style="font-size:44px">📡</div><h2>Sin internet</h2><p style="color:#6b7280">El panel necesita conexión para traerte las conversaciones al día. Vuelve a intentarlo cuando tengas señal.</p></body>',
       { headers: { "Content-Type": "text/html; charset=utf-8" } })));
+});
+
+// ── Notificaciones push: que suene la app aunque esté cerrada ──
+self.addEventListener("push", function (e) {
+  var d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (err) { d = {}; }
+  var titulo = d.titulo || "Winny Beauty Supply";
+  e.waitUntil(self.registration.showNotification(titulo, {
+    body: d.cuerpo || "Tienes mensajes nuevos",
+    icon: "/panel/icono.jpg",
+    badge: "/panel/icono.jpg",
+    tag: d.tag || "winny",
+    renotify: true,
+    data: { url: d.url || "/panel" }
+  }));
+});
+
+// Al tocar el aviso: si la app ya está abierta la trae al frente; si no, la abre.
+self.addEventListener("notificationclick", function (e) {
+  e.notification.close();
+  var destino = (e.notification.data && e.notification.data.url) || "/panel";
+  e.waitUntil(clients.matchAll({ type: "window", includeUncontrolled: true }).then(function (lista) {
+    for (var i = 0; i < lista.length; i++) {
+      if (lista[i].url.indexOf("/panel") !== -1 && "focus" in lista[i]) {
+        lista[i].navigate(destino);
+        return lista[i].focus();
+      }
+    }
+    if (clients.openWindow) return clients.openWindow(destino);
+  }));
 });`);
   });
 
@@ -2563,6 +2593,32 @@ self.addEventListener("fetch", e => {
     set_setting("supervisor", estado);
     logger.info({ estado }, "🕵️ Supervisor: interruptor cambiado desde el panel");
     res.redirect(`/panel/dashboard?key=${encodeURIComponent(g.key)}`);
+  });
+
+  // ── NOTIFICACIONES PUSH (que suene la app) ──
+  app.get("/panel/push/llave", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    res.json({ llave: llave_publica() });
+  });
+
+  app.post("/panel/push/suscribir", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    try {
+      guardar_suscripcion(req.body, g.nombre);
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(400).json({ ok: false, error: e.message });
+    }
+  });
+
+  app.post("/panel/push/prueba", async (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    const n = await notificar({
+      titulo: "🌸 Winny Beauty Supply",
+      cuerpo: "¡Listo! Así te van a llegar los avisos cuando una clienta escriba.",
+      url: `/panel?key=${encodeURIComponent(g.key)}`
+    });
+    res.json({ ok: true, enviados: n, suscripciones: cuantas_suscripciones() });
   });
 
   // ── Interruptor de los avisos de mensajes (solo jefa) ──
