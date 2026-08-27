@@ -197,7 +197,14 @@ function inbox_rows(limit = 300) {
     SELECT c.phone AS phone, c.name AS name, c.last_seen AS last_seen,
            c.handed_off_until AS handoff, c.tags AS tags, c.panel_ai AS panel_ai,
            c.taken_by AS taken_by, c.assigned_to AS assigned_to, c.cumple AS cumple,
+           -- Vista previa REAL: se salta los mensajes automáticos (el número
+           -- personal, la invitación al canal, la etiqueta de campaña). Antes
+           -- todas las filas mostraban lo mismo y no se sabía de qué iba el chat.
            (SELECT m.content FROM messages m WHERE m.phone = c.phone AND m.type = 'text'
+              AND m.content IS NOT NULL
+              AND m.content NOT LIKE 'Por cierto amor%'
+              AND m.content NOT LIKE '%whatsapp.com/channel%'
+              AND m.content NOT LIKE '[Campa%'
               ORDER BY m.timestamp DESC LIMIT 1) AS last_text,
            (SELECT MAX(m.timestamp) FROM messages m WHERE m.phone = c.phone AND m.direction = 'in') AS last_in,
            (SELECT MAX(m.timestamp) FROM messages m WHERE m.phone = c.phone AND m.direction = 'out') AS last_out
