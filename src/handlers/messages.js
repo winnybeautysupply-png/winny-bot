@@ -26,6 +26,7 @@ import { generate_invoice } from "../invoice.js";
 import { transcribe_audio, transcription_enabled } from "../transcribe.js";
 import { find_products, get_offers } from "../catalog.js";
 import { get_or_generate_image } from "../imagegen.js";
+import { obtener_album, guardar_album } from "../album.js";
 
 // ═══ Helpers ═══════════════════════════════════════════════════
 
@@ -791,6 +792,26 @@ function parse_owner_command(text) {
 export async function handle_owner_command(parsed) {
   const owner = config.business.owner_phone;
 
+  // ═══ ÁLBUM del catálogo: Winny manda las láminas y escribe "album" ═══
+  // Son los collages de pelucas que le enseña a las clientas para que escojan.
+  {
+    const t = (parsed.text || "").trim();
+    if (/^(album|álbum|catalogo visual|catálogo visual)\b/i.test(t)) {
+      const media = take_pending_owner_media();
+      if (!media.length) {
+        await send_text(owner,
+          "Mándame primero las fotos del catálogo jefa (las láminas con las pelucas) y después escribe *album* 💕\n\nPuedo guardar hasta 5.");
+        return true;
+      }
+      const n = guardar_album(media.map(m => m.url));
+      await send_text(owner,
+        `📔 Listo jefa, guardé *${n} lámina(s)* como tu catálogo 💕\n\n` +
+        `Ahora cuando una clienta pida ver pelucas, el bot le manda esas fotos y le pide que diga cuál le gustó para cotizarle.\n\n` +
+        `Si quieres cambiarlas, me mandas las nuevas y escribes *album* otra vez.`);
+      return true;
+    }
+  }
+
   // ═══ CATÁLOGO por texto: "catalogo: nombre, precio" o "agrégalo al catálogo" tras mandar foto/video ═══
   {
     const t = (parsed.text || "").trim();
@@ -1242,6 +1263,25 @@ async function handle_text(parsed, contact) {
       } else {
         await send_text(from, "¡Mira nuestras ofertas, mi amor! 🔥");
         await Promise.all(offers.slice(0, 6).map(p => send_product(from, p)));
+      }
+    } else if (tool.name === "mostrar_catalogo_visual") {
+      // Las láminas del catálogo: varias pelucas por foto, SIN precios y
+      // mezclando fibra con humano. Por eso después hay que pedirle que
+      // diga cuál le gustó para poder cotizarle de verdad.
+      const laminas = obtener_album();
+      logger.info({ from, laminas: laminas.length }, "📔 mostrar_catalogo_visual");
+      if (!laminas.length) {
+        await send_text(from, "Mi amor, dime qué buscas (largo, color, rizada o lacia) y te mando fotos de lo que tengo 💕");
+      } else {
+        await send_text(from, "Mira amor, aquí te dejo nuestro catálogo 💕✨");
+        for (const url of laminas) {
+          const sid = await send_image(from, url, "");
+          if (sid) save_message({ phone: from, direction: "out", type: "image", content: "[lámina del catálogo]", media_path: url, wa_message_id: sid });
+          await new Promise(r => setTimeout(r, 900));
+        }
+        const cierre = "Dime cuál te gustó — en qué foto y cuál de las cuatro — y te digo el precio y si la tengo 💕\n\n(Ahí hay de fibra y 100% humanas, por eso los precios cambian ✨)";
+        const csid = await send_text(from, cierre);
+        if (csid) save_message({ phone: from, direction: "out", type: "text", content: cierre, wa_message_id: csid });
       }
     } else if (tool.name === "consultar_pedido") {
       const ord = await find_latest_order_by_phone(from);

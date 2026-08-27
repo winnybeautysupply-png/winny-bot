@@ -75,6 +75,11 @@ const TOOLS = [
     input_schema: { type: "object", properties: {} }
   },
   {
+    name: "mostrar_catalogo_visual",
+    description: "Cuando la clienta pide VER el catálogo, ver fotos de pelucas, 'qué pelucas tienes', 'mándame fotos', 'muéstrame lo que hay' o quiere escoger entre varias opciones, llama esta función (sin parámetros). El sistema le manda las láminas del catálogo (varias pelucas por foto). OJO: esas láminas NO traen precios y mezclan fibra con 100% humano, así que después de mandarlas hay que pedirle que diga cuál le gustó para cotizarle.",
+    input_schema: { type: "object", properties: {} }
+  },
+  {
     name: "consultar_pedido",
     description: "Cuando la clienta pregunta por el ESTADO de su pedido ('¿dónde está mi pedido?', '¿ya salió?', '¿cuándo llega?', 'estatus de mi orden'), llama esta función (sin parámetros). El sistema busca su pedido por su número de teléfono y le dice el estado más reciente (Confirmado, Preparando, En camino, Entregado).",
     input_schema: { type: "object", properties: {} }
