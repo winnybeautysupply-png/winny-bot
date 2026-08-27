@@ -142,6 +142,11 @@ function take_pending_owner_media() {
   pending_owner_media.length = 0;
   return items.map(m => m.url);
 }
+// ¿Hay fotos/videos de la jefa esperando destino? (sin consumirlos)
+function hay_media_pendiente() {
+  const cutoff = Date.now() - 30 * 60 * 1000;
+  return pending_owner_media.some(m => m.at > cutoff);
+}
 async function add_catalog_from_media(owner, desc, media_url) {
   const p = await parse_catalog_caption(desc);
   if (!p || !p.nombre || (p.precio_detalle == null && p.precio_mayor == null)) {
@@ -815,7 +820,14 @@ export async function handle_owner_command(parsed) {
   // ═══ CATÁLOGO por texto: "catalogo: nombre, precio" o "agrégalo al catálogo" tras mandar foto/video ═══
   {
     const t = (parsed.text || "").trim();
-    const is_cat_cmd = CAT_RE.test(t) || /(agr[eé]ga|a[ñn]ade|sube|pon)\w*\s.*cat[aá]logo|al cat[aá]logo/i.test(t);
+    // Winny no escribe "catalogo:" — escribe como habla ("esos videos son de
+    // pelucas humanas largo 16 de 4,500 pesos, guárdalo"). Antes eso no
+    // disparaba nada y el bot le decía que sí lo había guardado sin guardarlo.
+    // Ahora GUARDAR + media pendiente cuenta como agregar al catálogo.
+    const dice_guardar = /\b(gu[aá]rda\w*|gu[aá]rdame\w*|almacena\w*|arch[ií]va\w*)\b/i.test(t);
+    const is_cat_cmd = CAT_RE.test(t)
+      || /(agr[eé]ga|a[ñn]ade|sube|pon)\w*\s.*cat[aá]logo|al cat[aá]logo/i.test(t)
+      || (dice_guardar && hay_media_pendiente());
     if (is_cat_cmd) {
       const media = take_pending_owner_media();
       if (!media.length) {
