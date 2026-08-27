@@ -355,11 +355,31 @@ async function avisar_mensajes_nuevos() {
   });
   const extra = nuevas.length > 12 ? `\n…y ${nuevas.length - 12} más` : "";
 
-  await send_text(config.business.owner_phone,
-    `📥 *Te escribieron ${nuevas.length} clienta(s)*\n\n${lineas.join("\n")}${extra}\n\n` +
-    (key ? `👉 ${config.public_base_url}/panel?key=${encodeURIComponent(key)}` : ""));
+  // Primero la APP (es lo que Winny pidió). Si todavía no ha activado las
+  // notificaciones en ningún teléfono, se cae al WhatsApp para no dejarla sin aviso.
+  let porApp = 0;
+  try {
+    const { notificar, cuantas_suscripciones } = await import("./push.js");
+    if (cuantas_suscripciones() > 0) {
+      const quienes = nuevas.slice(0, 4).map(r => r.nombre || `+${r.phone}`).join(", ");
+      porApp = await notificar({
+        titulo: `📥 Te escribieron ${nuevas.length} clienta(s)`,
+        cuerpo: quienes + (nuevas.length > 4 ? ` y ${nuevas.length - 4} más` : ""),
+        url: key ? `/panel?key=${encodeURIComponent(key)}` : "/panel",
+        tag: "mensajes"
+      });
+    }
+  } catch (e) {
+    logger.error({ err: e.message }, "Push: fallo avisando por la app");
+  }
 
-  logger.info({ clientas: nuevas.length }, "📥 Aviso de mensajes nuevos enviado a Winny");
+  if (!porApp) {
+    await send_text(config.business.owner_phone,
+      `📥 *Te escribieron ${nuevas.length} clienta(s)*\n\n${lineas.join("\n")}${extra}\n\n` +
+      (key ? `👉 ${config.public_base_url}/panel?key=${encodeURIComponent(key)}` : ""));
+  }
+
+  logger.info({ clientas: nuevas.length, porApp }, "📥 Aviso de mensajes nuevos enviado");
 }
 
 export function start_message_alerts() {

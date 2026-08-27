@@ -2012,10 +2012,68 @@ self.addEventListener("notificationclick", function (e) {
         <p>Ya quedaste con la sesión guardada en este teléfono por 90 días: la app abre directo, sin pedirte la clave otra vez.</p>
         <p class="muted">Si te prestan el teléfono o lo pierdes, toca <b>🚪 Salir</b> arriba y la sesión se cierra.</p>
       </div>
-      <div class="card">
-        <h3>🔔 Avisos</h3>
-        <p>Los avisos te siguen llegando por <b>WhatsApp</b> (el supervisor te escribe cuando una clienta necesita a una persona). No hace falta que tengas la app abierta.</p>
+      <div class="card" style="background:var(--pink-soft);border-color:var(--pink)">
+        <h3>🔔 Que te suene la app cuando una clienta escriba</h3>
+        <p>Toca el botón y dale <b>Permitir</b> cuando el teléfono te pregunte. Te llega el aviso al ícono de Winny aunque tengas la app cerrada.</p>
+        <button class="big" type="button" id="btn-push">🔔 Activar notificaciones en este teléfono</button>
+        <p class="muted" id="push-estado" style="margin:8px 0 0"></p>
+        <p class="muted">⚠️ En iPhone hay que <b>instalar la app primero</b> (los pasos de arriba). En Android funciona igual instalada o en Chrome.</p>
       </div>
+
+      <div class="card">
+        <h3>💬 Avisos por WhatsApp</h3>
+        <p>También te llega un WhatsApp cuando una clienta necesita a una persona, y el reporte de la campaña a las 8pm. Eso funciona sin instalar nada.</p>
+      </div>
+
+      <script>
+      (function(){
+        var btn = document.getElementById("btn-push");
+        var est = document.getElementById("push-estado");
+        if (!btn) return;
+        function decir(t){ est.textContent = t; }
+
+        if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+          btn.disabled = true;
+          decir("Este navegador no soporta notificaciones. En iPhone tiene que ser Safari y con la app instalada.");
+          return;
+        }
+        if (Notification.permission === "granted") decir("✅ Ya están activadas en este teléfono.");
+
+        function aBytes(base64){
+          var pad = "=".repeat((4 - base64.length % 4) % 4);
+          var b64 = (base64 + pad).replace(/-/g, "+").replace(/_/g, "/");
+          var raw = atob(b64), arr = new Uint8Array(raw.length);
+          for (var i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+          return arr;
+        }
+
+        btn.addEventListener("click", function(){
+          decir("Pidiendo permiso…");
+          Notification.requestPermission().then(function(p){
+            if (p !== "granted") { decir("No diste permiso. Sin permiso no te puedo avisar."); return; }
+            return navigator.serviceWorker.ready.then(function(reg){
+              return fetch("/panel/push/llave", { credentials: "same-origin" })
+                .then(function(r){ return r.json(); })
+                .then(function(d){
+                  return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: aBytes(d.llave) });
+                })
+                .then(function(sub){
+                  return fetch("/panel/push/suscribir", {
+                    method: "POST", credentials: "same-origin",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(sub)
+                  });
+                })
+                .then(function(){
+                  decir("✅ Listo. Te mando un aviso de prueba…");
+                  return fetch("/panel/push/prueba", { method: "POST", credentials: "same-origin" });
+                })
+                .then(function(){ decir("✅ Activadas. Si te llegó el aviso de prueba, ya está todo listo 💕"); });
+            });
+          }).catch(function(e){ decir("No pude activarlas: " + e.message); });
+        });
+      })();
+      </script>
     `, { key: g.key, role: g.role, nombre: g.nombre, activa: "app" }));
   });
 
