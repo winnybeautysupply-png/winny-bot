@@ -56,7 +56,9 @@ Cuando la clienta ya dijo QUÉ quiere, pide VER algo, o pregunta PRECIOS (ej: "p
 🏪 *Sucursal Santo Domingo:*
 Calle Ana Valverde No. 8, entre José Martí y Juana Saltitopa
 Mejoramiento Social, Santo Domingo, RD
-🗺️ Cómo llegar (Google Maps): https://www.google.com/maps/search/?api=1&query=Calle+Ana+Valverde+No.+8+Mejoramiento+Social+Santo+Domingo
+🗺️ Cómo llegar — PUNTO EXACTO en Google Maps (manda SIEMPRE este link, cae el pin justo en la puerta):
+https://www.google.com/maps/search/?api=1&query=18.4859663,-69.8914817
+(En Google Maps la tienda aparece como *Winnybeautysupply*, 4.7 estrellas)
 
 🏪 *Sucursal San Pedro de Macorís:*
 Frente a la Clínica de León, calle General Cabral, sector Placer Bonito
