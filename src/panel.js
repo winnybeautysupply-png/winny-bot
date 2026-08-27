@@ -338,6 +338,24 @@ a{color:var(--pink);text-decoration:none}
 .item{display:block;background:#fff;border:1px solid var(--line);border-radius:12px;padding:11px 13px;margin:8px 0}
 .item .n{font-weight:700;font-size:.98rem}
 .item .p{color:var(--soft);font-size:.84rem;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* ── Lista de chats estilo WhatsApp ── */
+.chats{background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.ch{display:flex;gap:12px;align-items:flex-start;padding:11px 13px;border-bottom:1px solid #f1f1f4;
+  text-decoration:none;color:inherit}
+.ch:last-child{border-bottom:0}
+.ch:active{background:#f5f5f7}
+.av{flex:0 0 46px;width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-weight:700;font-size:1.15rem;color:#fff;overflow:hidden}
+.ch .cuerpo{flex:1;min-width:0}
+.ch .fila1{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.ch .nom{font-weight:600;font-size:.97rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ch .hora{flex:0 0 auto;font-size:.7rem;color:#8a929c}
+.ch .fila2{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:2px}
+.ch .prev{color:#667781;font-size:.85rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
+.ch .badge{flex:0 0 auto;background:#25d366;color:#fff;font-size:.68rem;font-weight:700;
+  border-radius:11px;padding:1px 8px;white-space:nowrap}
+.ch .marcas{margin-top:4px;line-height:1.9}
+.ch.espera{background:#fffdf7}
 .time{float:right;color:#9aa1ac;font-size:.72rem;margin-left:8px}
 .pill{display:inline-block;font-size:.68rem;font-weight:700;padding:2px 8px;border-radius:20px;margin-right:5px}
 .pill.rojo{background:#fdecea;color:#b3261e}
@@ -442,7 +460,7 @@ function loginForm(msg) {
 }
 
 // ─── Vista: BANDEJA ──────────────────────────────────────────────
-function vistaBandeja(key, role, nombre, filtro, buscar = "", permisos = []) {
+function vistaBandeja(key, role, nombre, filtro, buscar = "", permisos = [], orden = "reciente") {
   const rows = inbox_rows();
   const n = contar(rows);
   const k = encodeURIComponent(key);
@@ -476,10 +494,14 @@ function vistaBandeja(key, role, nombre, filtro, buscar = "", permisos = []) {
   else if (filtro === "humano") lista = rows.filter(r => r.atendida_por === "humano");
   else if (filtro === "urgentes") lista = rows.filter(r => r.urgente);
 
-  // Las que llevan más tiempo esperando van primero: nadie se queda en visto.
+  // Orden como WhatsApp: la conversación con movimiento más reciente arriba.
+  // Con ?orden=espera se cambia a "las que llevan más tiempo esperando primero",
+  // que es el orden útil para trabajar la cola sin dejar a nadie en visto.
   lista = lista.slice().sort((a, b) => {
-    if (a.estado !== b.estado) return a.estado === "pendiente" ? -1 : 1;
-    if (a.estado === "pendiente") return (a.last_in || 0) - (b.last_in || 0);
+    if (orden === "espera") {
+      if (a.estado !== b.estado) return a.estado === "pendiente" ? -1 : 1;
+      if (a.estado === "pendiente") return (a.last_in || 0) - (b.last_in || 0);
+    }
     return (b.last_seen || 0) - (a.last_seen || 0);
   });
 
@@ -496,6 +518,15 @@ function vistaBandeja(key, role, nombre, filtro, buscar = "", permisos = []) {
     ${n.urgentes ? tile("urgentes", n.urgentes, "🚨 Requieren humano") : ""}
     ${tile("todas", rows.length, "Todas")}
   </div>`;
+
+  // Color estable por contacto para el círculo de la inicial (como WhatsApp).
+  const COLORES = ["#c2185b", "#7b4fa0", "#1a73a8", "#1e8e5a", "#c26a18", "#a03d3d", "#4a5d8f", "#8a6d1f"];
+  const avatar = r => {
+    const nom = prettyName(r.phone, r.name);
+    const letra = (nom.match(/\p{L}/u) || ["#"])[0].toUpperCase();
+    let h = 0; for (const c of String(r.phone)) h = (h * 31 + c.charCodeAt(0)) % 997;
+    return `<div class="av" style="background:${COLORES[h % COLORES.length]}">${esc(letra)}</div>`;
+  };
 
   const items = lista.map(r => {
     const disp = prettyName(r.phone, r.name);
@@ -516,11 +547,21 @@ function vistaBandeja(key, role, nombre, filtro, buscar = "", permisos = []) {
       (conApartado.has(r.phone)
         ? `<span class="pill ${conApartado.get(r.phone).vencido ? "urg" : "amar"}">🔖 ${conApartado.get(r.phone).vencido ? "Apartado vencido" : `Apartado: faltan RD$${rd(conApartado.get(r.phone).balance)}`}</span>`
         : "") + tags;
-    return `<a class="item" href="/panel/chat?key=${k}&phone=${encodeURIComponent(r.phone)}">
-      <span class="time">${esc(fmtTime(r.last_seen))}</span>
-      <div class="n">${esc(disp)}</div>
-      <div style="margin:5px 0 2px">${pills}</div>
-      <div class="p">${esc(prev) || "&nbsp;"}</div></a>`;
+    // Hora corta como WhatsApp: si es de hoy la hora, si no la fecha.
+    const hoy = inicioDelDia();
+    const t = fmtTime(r.last_seen);
+    const cuando = (r.last_seen || 0) >= hoy ? (t.split(", ")[1] || t)
+      : (r.last_seen || 0) >= hoy - 86400000 ? "ayer" : (t.split(",")[0] || t);
+    return `<a class="ch ${r.estado === "pendiente" ? "espera" : ""}" href="/panel/chat?key=${k}&phone=${encodeURIComponent(r.phone)}">
+      ${avatar(r)}
+      <div class="cuerpo">
+        <div class="fila1"><span class="nom">${esc(disp)}</span><span class="hora">${esc(cuando)}</span></div>
+        <div class="fila2">
+          <span class="prev">${((r.last_out||0) > (r.last_in||0) ? "✓ " : "")}${esc(prev) || "&nbsp;"}</span>
+          ${r.estado === "pendiente" ? `<span class="badge">${esc(hace(r.last_in).replace("hace ", ""))}</span>` : ""}
+        </div>
+        <div class="marcas">${pills}</div>
+      </div></a>`;
   }).join("");
 
   const buscador = `<form method="get" action="/panel" class="row" style="margin:0 0 10px">
@@ -531,8 +572,13 @@ function vistaBandeja(key, role, nombre, filtro, buscar = "", permisos = []) {
     </form>`;
 
   return shell("Bandeja", `${buscador}${buscar ? "" : tiles}
-    <p class="muted">${lista.length} conversaciones${buscar ? ` con «${esc(buscar)}»` : (filtro && filtro !== "todas" ? " en este filtro" : "")}${buscar ? "" : " · las que llevan más tiempo esperando salen primero"}</p>
-    ${items || "<p class='muted'>Nada por aquí ✨</p>"}`,
+    <p class="muted" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <span>${lista.length} conversaciones${buscar ? ` con «${esc(buscar)}»` : (filtro && filtro !== "todas" ? " en este filtro" : "")}</span>
+      ${buscar ? "" : (orden === "espera"
+        ? `<a class="pill tag" href="/panel?key=${k}&f=${esc(filtro)}">🕐 Ver por más reciente</a>`
+        : `<a class="pill tag" href="/panel?key=${k}&f=${esc(filtro)}&orden=espera">⏱️ Ver las que más esperan</a>`)}
+    </p>
+    ${items ? `<div class="chats">${items}</div>` : "<p class='muted'>Nada por aquí ✨</p>"}`,
     { key, role, nombre, permisos, refresco: 30, activa: filtro === "mias" ? "mias" : (filtro === "campana" ? "bandeja" : "bandeja") });
 }
 
@@ -1881,7 +1927,8 @@ self.addEventListener("fetch", e => {
   app.get("/panel", (req, res) => {
     const g = guard(req, res); if (!g) return;
     res.send(vistaBandeja(g.key, g.role, g.nombre, (req.query.f || "").toString(),
-      (req.query.buscar || "").toString().trim().slice(0, 60), g.permisos));
+      (req.query.buscar || "").toString().trim().slice(0, 60), g.permisos,
+      (req.query.orden || "reciente").toString()));
   });
 
   // Instrucciones para instalarla en el celular.
