@@ -67,7 +67,8 @@ Frente a la Clínica de León, calle General Cabral, sector Placer Bonito
 Lunes a Sábado: 9:00 AM - 7:00 PM
 Domingo: Cerrado
 
-📱 **Teléfono / WhatsApp:** 829-383-9433
+📱 **Teléfono / WhatsApp:** 849-621-9899 (Winny directo)
+⚠️ NUNCA des el 829-383-9433: ese número está fuera de servicio.
 🌐 **Web (catálogo completo con fotos y precios):** https://winnybeautysupply.com
 📸 **Instagram/TikTok:** @winnybeautysupply
 

@@ -72,7 +72,7 @@ export function generate_invoice(order) {
       doc.fillColor(GRAY).font("Helvetica").fontSize(9)
         .text("Extensiones de cabello humano · Pelucas · Accesorios", left + 85, y + 32, { width: width - 85 });
       doc.fillColor(GRAY).fontSize(9)
-        .text("WhatsApp: 849-248-9801  ·  Tel: 829-383-9433", left + 85, y + 45, { width: width - 85 });
+        .text("WhatsApp: 849-248-9801  ·  Tel: 849-621-9899", left + 85, y + 45, { width: width - 85 });
 
       y += 90;
       doc.moveTo(left, y).lineTo(right, y).lineWidth(2).strokeColor(GOLD).stroke();
