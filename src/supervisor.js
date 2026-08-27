@@ -252,3 +252,57 @@ export function start_supervisor() {
   }, 60 * 1000); // esperar 1 min tras arrancar, para no competir con el despliegue
   logger.info({ modelo: MODELO_BARATO, max_dia: MAX_DIA, encendido: supervisor_encendido() }, "🕵️ Supervisor de IA iniciado");
 }
+
+// ═══════════════════════════════════════════════════════════════
+// ALARMA DE BOT CAÍDO
+//
+// Del 22 de julio al 16 de agosto de 2026 el bot estuvo respondiendo
+// "tuve un problemita técnico" — 1,313 veces, a 350 clientas — porque
+// no lograba hablar con Claude. Nadie se enteró en 26 días.
+//
+// Eso no puede volver a pasar en silencio. Esto cuenta cuántas veces
+// sale ese mensaje de error por hora y le avisa a Winny por WhatsApp.
+// ═══════════════════════════════════════════════════════════════
+const SENAL_ERROR = "%problemita t%cnico%";  // el texto del fallback de ai.js
+const MIN_FALLOS = 3;                         // a partir de aquí se avisa
+const ESPERA_AVISO = 3 * 3600000;             // no repetir el aviso antes de 3h
+
+export function fallos_ultima_hora() {
+  try {
+    return db.prepare(`SELECT COUNT(*) AS n FROM messages
+      WHERE direction = 'out' AND timestamp > ? AND content LIKE ?`)
+      .get(Date.now() - 3600000, SENAL_ERROR)?.n || 0;
+  } catch { return 0; }
+}
+
+async function revisar_salud_bot() {
+  const fallos = fallos_ultima_hora();
+  if (fallos < MIN_FALLOS) return;
+
+  const ultimo = parseInt(get_setting("aviso_bot_caido", "0"), 10) || 0;
+  if (Date.now() - ultimo < ESPERA_AVISO) return;
+
+  const clientas = db.prepare(`SELECT COUNT(DISTINCT phone) AS n FROM messages
+    WHERE direction = 'out' AND timestamp > ? AND content LIKE ?`)
+    .get(Date.now() - 3600000, SENAL_ERROR)?.n || 0;
+
+  await send_text(config.business.owner_phone,
+    `🚨 *EL BOT ESTÁ FALLANDO*\n\n` +
+    `En la última hora le respondió "tuve un problemita técnico" a *${clientas} clienta(s)* (${fallos} veces).\n\n` +
+    `Eso pasa cuando no logra conectarse con Claude. Lo más común: *se acabaron los créditos*.\n\n` +
+    `👉 Revisa en console.anthropic.com → Billing\n\n` +
+    `Mientras tanto las clientas NO están siendo atendidas.`);
+
+  set_setting("aviso_bot_caido", String(Date.now()));
+  logger.error({ fallos, clientas }, "🚨 BOT CAÍDO — avisado a Winny");
+}
+
+export function start_health_watch() {
+  setTimeout(() => {
+    revisar_salud_bot().catch(e => logger.error({ err: e.message }, "Alarma de bot: error"));
+    setInterval(() => {
+      revisar_salud_bot().catch(e => logger.error({ err: e.message }, "Alarma de bot: error"));
+    }, 15 * 60 * 1000);
+  }, 90 * 1000);
+  logger.info("🚨 Alarma de bot caído activa");
+}

@@ -30,7 +30,8 @@ import {
   PERMISOS, set_permisos
 } from "./team.js";
 import {
-  analizar, start_supervisor, supervisor_encendido, set_setting, analisis_hoy, estado_supervisor
+  analizar, start_supervisor, supervisor_encendido, set_setting, analisis_hoy, estado_supervisor,
+  start_health_watch, fallos_ultima_hora
 } from "./supervisor.js";
 import {
   crear_apartado, abonar, cambiar_estado, ampliar_plazo, borrar_apartado, get_apartado,
@@ -2664,6 +2665,7 @@ self.addEventListener("fetch", e => {
   start_campaign_poller();
   start_backup_poller();
   start_sender_watch();
+  start_health_watch();
 
   logger.info("🖥️  Panel v2 montado en /panel");
 }
