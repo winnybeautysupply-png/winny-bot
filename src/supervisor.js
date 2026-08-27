@@ -306,3 +306,68 @@ export function start_health_watch() {
   }, 90 * 1000);
   logger.info("🚨 Alarma de bot caído activa");
 }
+
+// ═══════════════════════════════════════════════════════════════
+// AVISO DE CLIENTAS QUE ESCRIBEN
+//
+// Winny quiere enterarse cuando le escriben al bot. Pero son ~143
+// mensajes al día: avisar de cada uno sería insoportable y terminaría
+// silenciando el teléfono.
+//
+// Por eso va AGRUPADO: cada 10 minutos, si escribió gente nueva, le
+// llega UN solo WhatsApp con la lista. Solo de 8am a 10pm, y se apaga
+// desde el panel cuando quiera.
+// ═══════════════════════════════════════════════════════════════
+const INTERVALO_AVISO = 10 * 60 * 1000;
+
+export function avisos_encendidos() {
+  return get_setting("avisar_mensajes", "on") === "on";
+}
+
+async function avisar_mensajes_nuevos() {
+  if (!avisos_encendidos()) return;
+  const h = hora_rd();
+  if (h < 8 || h >= 22) return;
+
+  const desde = parseInt(get_setting("ultimo_aviso_mensajes", "0"), 10) || (Date.now() - INTERVALO_AVISO);
+  const owner = (config.business.owner_phone || "").replace(/\D/g, "");
+
+  // Quién escribió desde el último aviso (una línea por clienta, no por mensaje).
+  const nuevas = db.prepare(`
+    SELECT m.phone AS phone, MAX(m.timestamp) AS ts,
+           (SELECT c.name FROM contacts c WHERE c.phone = m.phone) AS nombre,
+           (SELECT m2.content FROM messages m2 WHERE m2.phone = m.phone AND m2.direction = 'in'
+             AND m2.type = 'text' AND m2.content IS NOT NULL
+             ORDER BY m2.timestamp DESC LIMIT 1) AS texto
+    FROM messages m
+    WHERE m.direction = 'in' AND m.timestamp > ?
+    GROUP BY m.phone ORDER BY ts ASC
+  `).all(desde).filter(r => r.phone && !r.phone.startsWith("ig:") && r.phone.replace(/\D/g, "") !== owner);
+
+  set_setting("ultimo_aviso_mensajes", String(Date.now()));
+  if (!nuevas.length) return;
+
+  const key = process.env.ADMIN_KEY || "";
+  const lineas = nuevas.slice(0, 12).map(r => {
+    const nom = r.nombre || `+${r.phone}`;
+    const txt = (r.texto || "(foto o audio)").replace(/\s+/g, " ").slice(0, 55);
+    return `• *${nom}*: ${txt}`;
+  });
+  const extra = nuevas.length > 12 ? `\n…y ${nuevas.length - 12} más` : "";
+
+  await send_text(config.business.owner_phone,
+    `📥 *Te escribieron ${nuevas.length} clienta(s)*\n\n${lineas.join("\n")}${extra}\n\n` +
+    (key ? `👉 ${config.public_base_url}/panel?key=${encodeURIComponent(key)}` : ""));
+
+  logger.info({ clientas: nuevas.length }, "📥 Aviso de mensajes nuevos enviado a Winny");
+}
+
+export function start_message_alerts() {
+  setTimeout(() => {
+    avisar_mensajes_nuevos().catch(e => logger.error({ err: e.message }, "Aviso de mensajes: error"));
+    setInterval(() => {
+      avisar_mensajes_nuevos().catch(e => logger.error({ err: e.message }, "Aviso de mensajes: error"));
+    }, INTERVALO_AVISO);
+  }, 2 * 60 * 1000);
+  logger.info("📥 Avisos de mensajes nuevos activos");
+}

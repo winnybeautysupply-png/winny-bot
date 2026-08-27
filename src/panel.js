@@ -31,7 +31,7 @@ import {
 } from "./team.js";
 import {
   analizar, start_supervisor, supervisor_encendido, set_setting, analisis_hoy, estado_supervisor,
-  start_health_watch, fallos_ultima_hora
+  start_health_watch, fallos_ultima_hora, start_message_alerts, avisos_encendidos
 } from "./supervisor.js";
 import {
   crear_apartado, abonar, cambiar_estado, ampliar_plazo, borrar_apartado, get_apartado,
@@ -1751,6 +1751,23 @@ function bloqueSupervisor(key) {
       <button class="${on ? "grey" : ""} big" type="submit">${on ? "Apagar supervisor" : "Encender supervisor"}</button>
     </form>
     <p class="muted" style="margin:8px 0 0">Cada análisis gasta créditos de Claude. Apágalo si los créditos están bajos.</p>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <h3>📥 Avisos de clientas que escriben</h3>
+    <p class="muted" style="margin:0 0 8px">
+      ${avisos_encendidos()
+        ? "Encendido: cada 10 minutos te llega UN WhatsApp con la lista de quién te escribió. De 8am a 10pm."
+        : "Apagado: no te avisamos cuando te escriben."}
+    </p>
+    <div class="kv"><span>Estado</span><b>${avisos_encendidos() ? "🟢 Encendido" : "⚪ Apagado"}</b></div>
+    <form method="post" action="/panel/avisos">
+      <input type="hidden" name="key" value="${esc(key)}">
+      <input type="hidden" name="estado" value="${avisos_encendidos() ? "off" : "on"}">
+      <button class="${avisos_encendidos() ? "grey" : ""} big" type="submit">
+        ${avisos_encendidos() ? "Apagar avisos" : "Encender avisos"}</button>
+    </form>
+    <p class="muted" style="margin:8px 0 0">Van agrupados a propósito: son ~143 mensajes al día y avisar de cada uno sería insoportable.</p>
   </div>`;
 }
 
@@ -2548,6 +2565,16 @@ self.addEventListener("fetch", e => {
     res.redirect(`/panel/dashboard?key=${encodeURIComponent(g.key)}`);
   });
 
+  // ── Interruptor de los avisos de mensajes (solo jefa) ──
+  app.post("/panel/avisos", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    const estado = String(req.body?.estado) === "on" ? "on" : "off";
+    set_setting("avisar_mensajes", estado);
+    logger.info({ estado }, "📥 Avisos de mensajes: interruptor cambiado");
+    res.redirect(`/panel/dashboard?key=${encodeURIComponent(g.key)}`);
+  });
+
   // ── Asignar la clienta a alguien del equipo ──
   app.post("/panel/asignar", (req, res) => {
     const g = guard(req, res); if (!g) return;
@@ -2720,6 +2747,7 @@ self.addEventListener("fetch", e => {
   start_backup_poller();
   start_sender_watch();
   start_health_watch();
+  start_message_alerts();
 
   logger.info("🖥️  Panel v2 montado en /panel");
 }
