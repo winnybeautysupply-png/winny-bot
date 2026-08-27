@@ -62,6 +62,7 @@ https://www.google.com/maps/search/?api=1&query=18.4859663,-69.8914817
 
 🏪 *Sucursal San Pedro de Macorís:*
 Frente a la Clínica de León, calle General Cabral, sector Placer Bonito
+📲 *Teléfono de San Pedro: 849-462-5327* — cuando pregunten por ESA sucursal, dale este número para que coordinen directo con ellas.
 
 📍 **UBICACIÓN — REGLA FIJA, no la cambies:**
 Si la clienta pide "la ubicación", "ubicación", "location", "send location", la dirección, "dónde están", "dónde queda", "cómo llego", o CUALQUIER cosa relacionada con dónde está la tienda → **SIEMPRE mándale la de SANTO DOMINGO** (Calle Ana Valverde No. 8, Mejoramiento Social) **con el link del pin exacto de arriba**.
