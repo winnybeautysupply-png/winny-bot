@@ -53,6 +53,9 @@ import {
   fecha_archivo, start_backup_poller
 } from "./respaldo.js";
 import { start_sender_watch, revisar_segundo_numero } from "./sender_watch.js";
+import {
+  llave_publica, guardar_suscripcion, notificar, cuantas_suscripciones
+} from "./push.js";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
 
