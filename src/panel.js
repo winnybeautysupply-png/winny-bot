@@ -54,6 +54,11 @@ import {
 } from "./respaldo.js";
 import { start_sender_watch, revisar_segundo_numero } from "./sender_watch.js";
 import {
+  ESTADOS as ESTADOS_COMPRA, CONCEPTOS, registrar_compra, obtener_compra,
+  listar_compras, cambiar_estado, borrar_compra, agregar_costo, borrar_costo,
+  costeo, resumen as resumen_compras, inicioDelMes
+} from "./compras.js";
+import {
   llave_publica, guardar_suscripcion, notificar, cuantas_suscripciones
 } from "./push.js";
 import { config } from "./config.js";
@@ -305,6 +310,7 @@ function shell(title, inner, { key = "", role = "", nombre = "", activa = "", pe
       ${tiene("apartados") ? `<a class="${activa === "apartados" ? "on" : ""}" href="/panel/apartados?key=${k}">🔖 Apartados</a>` : ""}
       ${role === "jefa" ? `<a class="${activa === "dash" ? "on" : ""}" href="/panel/dashboard?key=${k}">📊 Números</a>` : ""}
           ${tiene("caja") ? `<a class="${activa === "inventario" ? "on" : ""}" href="/panel/inventario?key=${k}">📦 Inventario</a>` : ""}
+      ${role === "jefa" ? `<a class="${activa === "compras" ? "on" : ""}" href="/panel/compras?key=${k}">🛒 Compras</a>` : ""}
       ${role === "jefa" ? `<a class="${activa === "campanas" ? "on" : ""}" href="/panel/campanas?key=${k}">📣 Campañas</a>` : ""}
       ${role === "jefa" ? `<a class="${activa === "equipo" ? "on" : ""}" href="/panel/equipo?key=${k}">👥 Equipo</a>` : ""}
       ${role === "jefa" ? `<a class="${activa === "pedidos" ? "on" : ""}" href="/panel/pedidos?key=${k}">🧾 Pedidos</a>` : ""}
@@ -1846,6 +1852,192 @@ function vistaEquipo(key, role, nombre, notice = "") {
   `, { key, role, nombre, activa: "equipo" });
 }
 
+// ═══════════════════════════════════════════════════════════════
+// COMPRAS — solo la jefa. Aquí se ve lo que sale, no lo que entra.
+// ═══════════════════════════════════════════════════════════════
+
+// Pesos, sin decimales: los centavos no ayudan a decidir nada.
+function pesos(n) {
+  const v = Number(n);
+  return Number.isFinite(v) ? "RD$" + Math.round(v).toLocaleString("es-DO") : "—";
+}
+
+function fmtFecha(ts) {
+  try {
+    return new Date(ts).toLocaleDateString("es-DO", {
+      timeZone: "America/Santo_Domingo", day: "2-digit", month: "short", year: "numeric"
+    });
+  } catch { return ""; }
+}
+
+function chipEstado(estado) {
+  const e = ESTADOS_COMPRA.find(x => x.id === estado) || ESTADOS_COMPRA[1];
+  const color = estado === "recibida" ? "hum" : estado === "en_aduana" ? "amar" : "tag";
+  return `<span class="pill ${color}">${e.emoji} ${esc(e.nombre)}</span>`;
+}
+
+function vistaCompras(key, role, nombre, notice = "") {
+  const k = encodeURIComponent(key);
+  const mes = inicioDelMes();
+  const r = resumen_compras({ desde: mes });
+  const compras = listar_compras({ limite: 120 });
+
+  const filas = compras.map(c => {
+    const kk = costeo(c);
+    const enUsd = c.moneda === "USD"
+      ? `<span class="muted">US$${rd(c.monto)} × ${rd(c.tasa)}</span> · ` : "";
+    return `<a class="item" href="/panel/compra/${c.id}?key=${k}">
+      <div class="n">${esc(c.proveedor)} ${chipEstado(c.estado)}</div>
+      <div class="p">${esc(c.descripcion || "sin descripción")}</div>
+      <div class="p">${fmtFecha(c.fecha)} · ${enUsd}<b>${pesos(kk.total_dop)}</b>${
+        kk.por_pieza ? ` · <b>${pesos(kk.por_pieza)}</b> por pieza` : ""}</div>
+    </a>`;
+  }).join("");
+
+  const opcEstado = ESTADOS_COMPRA.map(e =>
+    `<option value="${e.id}"${e.id === "pagada" ? " selected" : ""}>${e.emoji} ${esc(e.nombre)}</option>`).join("");
+
+  return shell("Compras", `
+    ${notice}
+    <div class="tiles">
+      <div class="tile"><b>${pesos(r.total_dop)}</b><span>comprado este mes</span></div>
+      <div class="tile"><b>${pesos(r.gastos_dop)}</b><span>flete + aduana</span></div>
+      <div class="tile"><b>${rd(r.piezas)}</b><span>piezas</span></div>
+      <div class="tile"><b>${rd(r.pendientes)}</b><span>sin recibir</span></div>
+    </div>
+
+    <div class="card">
+      <h3>Anotar una compra</h3>
+      <form method="post" action="/panel/compra/nueva">
+        <input type="hidden" name="key" value="${esc(key)}">
+        <input name="proveedor" placeholder="¿A quién le compró? (ej. Xuchang Sanjiayi)" required
+               style="width:100%;padding:10px;margin-bottom:6px;border:1px solid var(--line);border-radius:9px">
+        <input name="descripcion" placeholder="¿Qué compró? (ej. 1,610 piezas de cabello sintético)"
+               style="width:100%;padding:10px;margin-bottom:6px;border:1px solid var(--line);border-radius:9px">
+        <div class="row" style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap">
+          <select name="moneda" style="flex:1;min-width:110px;padding:10px;border:1px solid var(--line);border-radius:9px">
+            <option value="DOP">Pesos RD$</option>
+            <option value="USD">Dólares US$</option>
+          </select>
+          <input name="monto" inputmode="decimal" placeholder="Monto" required
+                 style="flex:1;min-width:110px;padding:10px;border:1px solid var(--line);border-radius:9px">
+          <input name="tasa" inputmode="decimal" placeholder="Dólar a (ej. 62)"
+                 style="flex:1;min-width:110px;padding:10px;border:1px solid var(--line);border-radius:9px">
+        </div>
+        <div class="row" style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap">
+          <input name="piezas" inputmode="numeric" placeholder="¿Cuántas piezas?"
+                 style="flex:1;min-width:110px;padding:10px;border:1px solid var(--line);border-radius:9px">
+          <input name="factura" placeholder="No. de factura"
+                 style="flex:1;min-width:110px;padding:10px;border:1px solid var(--line);border-radius:9px">
+          <select name="tipo" style="flex:1;min-width:110px;padding:10px;border:1px solid var(--line);border-radius:9px">
+            <option value="local">Compra local</option>
+            <option value="importacion">Importación</option>
+          </select>
+          <select name="estado" style="flex:1;min-width:110px;padding:10px;border:1px solid var(--line);border-radius:9px">
+            ${opcEstado}
+          </select>
+        </div>
+        <button class="big" type="submit">Guardar compra</button>
+      </form>
+      <p class="muted" style="margin:8px 0 0">El dólar solo hace falta si compró en dólares. El flete y la aduana se
+      agregan después, dentro de la compra — así sabe lo que <b>de verdad</b> le costó cada pieza.</p>
+    </div>
+
+    ${filas || `<p class="muted">Todavía no hay compras anotadas.</p>`}
+  `, { key, role, nombre, activa: "compras" });
+}
+
+function vistaCompra(key, role, nombre, c, notice = "") {
+  const k = encodeURIComponent(key);
+  const kk = costeo(c);
+
+  const gastos = kk.extras.map(g => `
+    <div class="kv">
+      <span>${esc(g.concepto)}${g.nota ? ` — ${esc(g.nota)}` : ""}</span>
+      <span style="display:flex;gap:8px;align-items:center">
+        <b>${pesos(g.monto)}</b>
+        <form method="post" action="/panel/compra/costo/borrar" style="display:inline">
+          <input type="hidden" name="key" value="${esc(key)}">
+          <input type="hidden" name="id" value="${g.id}">
+          <input type="hidden" name="compra" value="${c.id}">
+          <button class="ghost" type="submit" style="padding:2px 8px;font-size:.75rem">✕</button>
+        </form>
+      </span>
+    </div>`).join("");
+
+  const opcEstado = ESTADOS_COMPRA.map(e =>
+    `<option value="${e.id}"${e.id === c.estado ? " selected" : ""}>${e.emoji} ${esc(e.nombre)}</option>`).join("");
+  const opcConcepto = CONCEPTOS.map(x => `<option value="${x}">${esc(x)}</option>`).join("");
+
+  return shell(`Compra · ${c.proveedor}`, `
+    ${notice}
+    <p><a href="/panel/compras?key=${k}">← Compras</a></p>
+
+    <div class="card">
+      <h3>${esc(c.proveedor)} ${chipEstado(c.estado)}</h3>
+      <div class="kv"><span>Qué</span><b>${esc(c.descripcion || "—")}</b></div>
+      <div class="kv"><span>Fecha</span><b>${fmtFecha(c.fecha)}</b></div>
+      ${c.factura ? `<div class="kv"><span>Factura</span><b>${esc(c.factura)}</b></div>` : ""}
+      <div class="kv"><span>Tipo</span><b>${c.tipo === "importacion" ? "Importación" : "Compra local"}</b></div>
+      ${c.moneda === "USD"
+        ? `<div class="kv"><span>Mercancía</span><b>US$${rd(c.monto)} × ${rd(c.tasa)} = ${pesos(kk.mercancia_dop)}</b></div>`
+        : `<div class="kv"><span>Mercancía</span><b>${pesos(kk.mercancia_dop)}</b></div>`}
+      ${c.piezas ? `<div class="kv"><span>Piezas</span><b>${rd(c.piezas)}</b></div>` : ""}
+    </div>
+
+    <div class="card">
+      <h3>Gastos de traerla</h3>
+      ${gastos || `<p class="muted">Todavía no hay flete ni aduana anotados.</p>`}
+      <form method="post" action="/panel/compra/costo" style="margin-top:10px">
+        <input type="hidden" name="key" value="${esc(key)}">
+        <input type="hidden" name="compra" value="${c.id}">
+        <div class="row" style="display:flex;gap:6px;flex-wrap:wrap">
+          <select name="concepto" style="flex:1;min-width:110px;padding:10px;border:1px solid var(--line);border-radius:9px">
+            ${opcConcepto}
+          </select>
+          <input name="monto" inputmode="decimal" placeholder="Monto en pesos" required
+                 style="flex:1;min-width:110px;padding:10px;border:1px solid var(--line);border-radius:9px">
+          <input name="nota" placeholder="Nota (opcional)"
+                 style="flex:2;min-width:140px;padding:10px;border:1px solid var(--line);border-radius:9px">
+        </div>
+        <button class="big" type="submit" style="margin-top:6px">Agregar gasto</button>
+      </form>
+    </div>
+
+    <div class="card" style="border-color:var(--pink);background:var(--pink-soft)">
+      <h3>Lo que de verdad le costó</h3>
+      <div class="kv"><span>Mercancía</span><b>${pesos(kk.mercancia_dop)}</b></div>
+      <div class="kv"><span>Flete, aduana y demás</span><b>${pesos(kk.gastos_dop)}</b></div>
+      <div class="kv"><span><b>TOTAL</b></span><b style="font-size:1.15rem">${pesos(kk.total_dop)}</b></div>
+      ${kk.por_pieza
+        ? `<div class="kv"><span><b>Cada pieza le salió en</b></span>
+             <b style="font-size:1.3rem;color:var(--pink)">${pesos(kk.por_pieza)}</b></div>`
+        : `<p class="muted" style="margin:8px 0 0">Ponle las piezas a esta compra para saber cuánto salió cada una.</p>`}
+      ${kk.gastos_dop > 0
+        ? `<p class="muted" style="margin:8px 0 0">Traerla le subió el costo un <b>${Math.round(kk.recargo_pct)}%</b>.</p>`
+        : ""}
+    </div>
+
+    <div class="card">
+      <h3>Cambiar estado</h3>
+      <form method="post" action="/panel/compra/estado" style="display:flex;gap:6px;flex-wrap:wrap">
+        <input type="hidden" name="key" value="${esc(key)}">
+        <input type="hidden" name="id" value="${c.id}">
+        <select name="estado" style="flex:1;min-width:140px;padding:10px;border:1px solid var(--line);border-radius:9px">
+          ${opcEstado}
+        </select>
+        <button class="big" type="submit">Guardar</button>
+      </form>
+      <form method="post" action="/panel/compra/borrar" style="margin-top:10px"
+            onsubmit="return confirm('¿Borrar esta compra y sus gastos? No se puede deshacer.')">
+        <input type="hidden" name="key" value="${esc(key)}">
+        <input type="hidden" name="id" value="${c.id}">
+        <button class="ghost" type="submit" style="font-size:.8rem">🗑 Borrar esta compra</button>
+      </form>
+    </div>
+  `, { key, role, nombre, activa: "compras" });
+}
+
 // ─── Rutas ───────────────────────────────────────────────────────
 export function mount_panel(app) {
   // Nada del panel se guarda en caché: si la clienta escribió hace 10 segundos,
@@ -2112,6 +2304,84 @@ self.addEventListener("notificationclick", function (e) {
     const g = guard(req, res); if (!g) return;
     if (soloJefa(g, res)) return;
     res.send(vistaDashboard(g.key, g.role, g.nombre));
+  });
+
+  // ── Compras (solo jefa) ──
+  // Todo redirige de vuelta con ?ok= o ?err= para que Winny vea qué pasó,
+  // en vez de quedarse mirando una pantalla en blanco.
+  const aCompras = (key, extra = "") => `/panel/compras?key=${encodeURIComponent(key)}${extra}`;
+  const aCompra = (key, id, extra = "") =>
+    `/panel/compra/${id}?key=${encodeURIComponent(key)}${extra}`;
+  const avisoCompra = req => {
+    if (req.query.ok) return `<div class="notice">✅ ${esc(String(req.query.ok))}</div>`;
+    if (req.query.err) return `<div class="notice err">⚠️ ${esc(String(req.query.err))}</div>`;
+    return "";
+  };
+
+  app.get("/panel/compras", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    res.send(vistaCompras(g.key, g.role, g.nombre, avisoCompra(req)));
+  });
+
+  app.get("/panel/compra/:id", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    const c = obtener_compra(Number(req.params.id));
+    if (!c) return res.redirect(aCompras(g.key, "&err=" + encodeURIComponent("Esa compra ya no existe.")));
+    res.send(vistaCompra(g.key, g.role, g.nombre, c, avisoCompra(req)));
+  });
+
+  app.post("/panel/compra/nueva", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    const b = req.body || {};
+    try {
+      const id = registrar_compra({
+        proveedor: b.proveedor, descripcion: b.descripcion, tipo: b.tipo,
+        moneda: b.moneda, monto: b.monto, tasa: b.tasa, factura: b.factura,
+        piezas: b.piezas, estado: b.estado, quien: g.nombre
+      });
+      res.redirect(aCompra(g.key, id, "&ok=" + encodeURIComponent("Compra guardada. Ahora agrégale el flete y la aduana.")));
+    } catch (e) {
+      res.redirect(aCompras(g.key, "&err=" + encodeURIComponent(e.message)));
+    }
+  });
+
+  app.post("/panel/compra/costo", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    const b = req.body || {};
+    const compra = Number(b.compra);
+    try {
+      agregar_costo(compra, { concepto: b.concepto, monto: b.monto, nota: b.nota });
+      res.redirect(aCompra(g.key, compra, "&ok=" + encodeURIComponent("Gasto agregado.")));
+    } catch (e) {
+      res.redirect(aCompra(g.key, compra, "&err=" + encodeURIComponent(e.message)));
+    }
+  });
+
+  app.post("/panel/compra/costo/borrar", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    const compra = Number(req.body?.compra);
+    borrar_costo(Number(req.body?.id));
+    res.redirect(aCompra(g.key, compra, "&ok=" + encodeURIComponent("Gasto borrado.")));
+  });
+
+  app.post("/panel/compra/estado", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    const id = Number(req.body?.id);
+    cambiar_estado(id, String(req.body?.estado || ""));
+    res.redirect(aCompra(g.key, id, "&ok=" + encodeURIComponent("Estado actualizado.")));
+  });
+
+  app.post("/panel/compra/borrar", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    borrar_compra(Number(req.body?.id));
+    res.redirect(aCompras(g.key, "&ok=" + encodeURIComponent("Compra borrada.")));
   });
 
   // ── Acciones sobre un pedido (solo jefa) ──
