@@ -55,7 +55,7 @@ import {
 import { start_sender_watch, revisar_segundo_numero } from "./sender_watch.js";
 import {
   ESTADOS as ESTADOS_COMPRA, CONCEPTOS, registrar_compra, obtener_compra,
-  listar_compras, cambiar_estado, borrar_compra, agregar_costo, borrar_costo,
+  listar_compras, cambiar_estado as cambiar_estado_compra, borrar_compra, agregar_costo, borrar_costo,
   costeo, resumen as resumen_compras, inicioDelMes
 } from "./compras.js";
 import {
@@ -2373,7 +2373,7 @@ self.addEventListener("notificationclick", function (e) {
     const g = guard(req, res); if (!g) return;
     if (soloJefa(g, res)) return;
     const id = Number(req.body?.id);
-    cambiar_estado(id, String(req.body?.estado || ""));
+    cambiar_estado_compra(id, String(req.body?.estado || ""));
     res.redirect(aCompra(g.key, id, "&ok=" + encodeURIComponent("Estado actualizado.")));
   });
 
