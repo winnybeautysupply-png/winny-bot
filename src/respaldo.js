@@ -87,6 +87,31 @@ export const TABLAS = {
     sql: `SELECT id, monto, categoria, metodo, cajera, anulada, anulada_por,
                  datetime(ts/1000,'unixepoch','-4 hours') AS fecha
           FROM sales ORDER BY ts DESC`
+  },
+  // La mercancía ya viene costeada: monto en pesos + flete/aduana + costo por
+  // pieza, que es el número con el que se pone precio.
+  compras: {
+    titulo: "Compras",
+    sql: `SELECT p.id, datetime(p.fecha/1000,'unixepoch','-4 hours') AS fecha,
+                 p.proveedor, p.descripcion, p.tipo, p.factura, p.estado, p.piezas,
+                 p.moneda, p.monto, p.tasa,
+                 ROUND(CASE WHEN p.moneda = 'USD' THEN p.monto * COALESCE(p.tasa,0) ELSE p.monto END, 2) AS mercancia_rd,
+                 ROUND(COALESCE((SELECT SUM(c.monto) FROM purchase_costs c WHERE c.purchase_id = p.id),0), 2) AS gastos_rd,
+                 ROUND(CASE WHEN p.moneda = 'USD' THEN p.monto * COALESCE(p.tasa,0) ELSE p.monto END
+                       + COALESCE((SELECT SUM(c.monto) FROM purchase_costs c WHERE c.purchase_id = p.id),0), 2) AS total_rd,
+                 CASE WHEN p.piezas > 0 THEN
+                   ROUND((CASE WHEN p.moneda = 'USD' THEN p.monto * COALESCE(p.tasa,0) ELSE p.monto END
+                          + COALESCE((SELECT SUM(c.monto) FROM purchase_costs c WHERE c.purchase_id = p.id),0)) / p.piezas, 2)
+                 END AS costo_por_pieza_rd,
+                 p.quien, p.nota
+          FROM purchases p ORDER BY p.fecha DESC`
+  },
+  gastos_compras: {
+    titulo: "Flete y aduana",
+    sql: `SELECT c.purchase_id AS compra, p.proveedor, c.concepto, c.monto, c.nota,
+                 datetime(c.created_at/1000,'unixepoch','-4 hours') AS fecha
+          FROM purchase_costs c LEFT JOIN purchases p ON p.id = c.purchase_id
+          ORDER BY c.id DESC`
   }
 };
 
