@@ -95,6 +95,31 @@ app.post("/webhook", async (req, res) => {
   res.set("Content-Type", "text/xml");
   res.send("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>");
 
+  // ═══ BOT DESCONECTADO (Winny, 2026-08-30) ═══════════════════
+  // Winny pidió desconectar el bot. Los mensajes de las clientas SIGUEN
+  // llegando y guardándose (se ven en el panel), pero el bot NO contesta.
+  // A Twilio ya le respondimos 200 arriba, así que no reintenta ni marca
+  // errores. Para volver a encenderlo: borrar este bloque y hacer push,
+  // o poner BOT_ACTIVO=si en Render.
+  if (process.env.BOT_ACTIVO !== "si") {
+    try {
+      const b = req.body || {};
+      if (b.From && b.MessageSid && (b.Body || b.NumMedia)) {
+        const { save_message, upsert_contact } = await import("./db.js");
+        const from = String(b.From).replace("whatsapp:", "").replace(/\D/g, "");
+        upsert_contact(from, b.ProfileName || null);
+        save_message({
+          phone: from, direction: "in", type: "text",
+          content: b.Body || "[media]", wa_message_id: b.MessageSid
+        });
+      }
+    } catch (e) {
+      logger.error({ err: e?.message }, "Bot desconectado: fallo guardando el mensaje");
+    }
+    logger.warn("🔌 Bot DESCONECTADO — mensaje guardado pero no se responde");
+    return;
+  }
+
   try {
     const body = req.body;
 
