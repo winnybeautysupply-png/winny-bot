@@ -172,7 +172,11 @@ app.get("/instagram/webhook", (req, res) => {
 });
 app.post("/instagram/webhook", (req, res) => {
   res.sendStatus(200); // responder rápido para que Meta no reintente
-  handle_ig_event(req.body).catch(err => logger.error({ err: err.message }, "Error en webhook de Instagram"));
+  // ═══ BOT DESCONECTADO TAMBIÉN EN INSTAGRAM (Winny, 2026-09-01) ═══
+  // El corte de WhatsApp no tocaba Instagram, que responde por la API de
+  // Meta (no por Twilio) y por eso seguía contestando solo. Ahora tampoco.
+  // Para encenderlo: revertir este commit.
+  logger.warn("🔌 Bot DESCONECTADO — evento de Instagram ignorado");
 });
 
 // ─── VOZ (Fase 1): Twilio pega aquí cuando entra una LLAMADA ─────
@@ -201,9 +205,12 @@ app.use((err, _req, res, _next) => {
 // Servidor HTTP explícito para poder adjuntar el WebSocket de voz.
 const server = http.createServer(app);
 setup_voice_ws(server); // adjunta el WS de ConversationRelay en /voice/ws
-start_shipping_poller(); // revisa estados de envío en la hoja cada 5 min
-start_improve_poller();  // auto-mejora: revisa conversaciones periódicamente
-start_pending_poller();  // recuerda a Winny los pagos por confirmar / pedidos por enviar
+// ═══ BOT DESCONECTADO (Winny, 2026-09-01) ══════════════════════
+// Los pollers también escriben solos a las clientas y a Winny. Con el bot
+// desconectado no deben correr. Para encenderlos: revertir este commit.
+// start_shipping_poller(); // revisa estados de envío en la hoja cada 5 min
+// start_improve_poller();  // auto-mejora: revisa conversaciones periódicamente
+// start_pending_poller();  // recuerda a Winny los pagos por confirmar / pedidos por enviar
 
 server.listen(config.port, () => {
   logger.info({
