@@ -1,0 +1,890 @@
+<title>Los 5 Reembolsos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Karla:wght@400;500;700&display=swap">
+<style>
+  :root{
+    --paper:#f7f3ef;
+    --surface:#ffffff;
+    --ink:#1d1714;
+    --muted:#6d605a;
+    --line:#e3d9d0;
+    --line-soft:#efe7e0;
+    --accent:#9a2f28;
+    --accent-soft:#f6e9e6;
+    --gold:#a5761f;
+    --gold-soft:#f7efdd;
+    --ok:#3f6b4a;
+    --shadow:0 1px 2px rgba(29,23,20,.05);
+    --display:"Fraunces",Georgia,"Times New Roman",serif;
+    --body:"Karla","Helvetica Neue",Arial,sans-serif;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --paper:#171311;
+      --surface:#211b18;
+      --ink:#f2ece7;
+      --muted:#a89a92;
+      --line:#3a302b;
+      --line-soft:#2b2320;
+      --accent:#e08078;
+      --accent-soft:#331f1d;
+      --gold:#d7a94f;
+      --gold-soft:#2e2617;
+      --ok:#8bbd97;
+      --shadow:0 1px 2px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#171311;
+    --surface:#211b18;
+    --ink:#f2ece7;
+    --muted:#a89a92;
+    --line:#3a302b;
+    --line-soft:#2b2320;
+    --accent:#e08078;
+    --accent-soft:#331f1d;
+    --gold:#d7a94f;
+    --gold-soft:#2e2617;
+    --ok:#8bbd97;
+    --shadow:0 1px 2px rgba(0,0,0,.3);
+  }
+
+  *{box-sizing:border-box}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:var(--body);
+    font-size:16px;
+    line-height:1.55;
+    -webkit-text-size-adjust:100%;
+  }
+  .wrap{max-width:44rem;margin:0 auto;padding:1.5rem 1.1rem 4rem}
+
+  /* ---------- encabezado ---------- */
+  .masthead{border-bottom:2px solid var(--ink);padding-bottom:1.1rem;margin-bottom:1.6rem}
+  .eyebrow{
+    font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--muted);font-weight:700;margin:0 0 .5rem
+  }
+  h1{
+    font-family:var(--display);font-weight:700;
+    font-size:clamp(2rem,9vw,2.9rem);line-height:1.02;
+    margin:0 0 .5rem;text-wrap:balance;letter-spacing:-.015em;
+  }
+  .standfirst{margin:0;color:var(--muted);font-size:1.02rem;max-width:34rem}
+
+  .tally{
+    display:flex;flex-wrap:wrap;gap:.4rem;margin-top:1rem;
+    font-size:.78rem;
+  }
+  .tally span{
+    border:1px solid var(--line);border-radius:2px;
+    padding:.25rem .5rem;color:var(--muted);background:var(--surface);
+  }
+  .tally b{color:var(--ink);font-variant-numeric:tabular-nums}
+
+  /* ---------- aviso ---------- */
+  .warn{
+    border-left:3px solid var(--accent);background:var(--accent-soft);
+    padding:.85rem 1rem;margin:1.6rem 0;border-radius:0 3px 3px 0;
+  }
+  .warn h2{
+    font-family:var(--body);font-size:.72rem;letter-spacing:.13em;
+    text-transform:uppercase;color:var(--accent);margin:0 0 .35rem;font-weight:700;
+  }
+  .warn p{margin:0;font-size:.93rem}
+  .warn p + p{margin-top:.5rem}
+
+  /* ---------- pasos ---------- */
+  .step{margin-top:2.6rem}
+  .step-head{display:flex;gap:.75rem;align-items:baseline;border-bottom:1px solid var(--line);padding-bottom:.5rem}
+  .step-num{
+    font-family:var(--display);font-weight:700;font-size:1.5rem;
+    color:var(--accent);line-height:1;font-variant-numeric:tabular-nums;
+  }
+  .step-head h2{
+    font-family:var(--display);font-weight:700;font-size:1.35rem;
+    margin:0;line-height:1.15;text-wrap:balance;letter-spacing:-.01em;
+  }
+  .when{
+    display:inline-block;margin-left:auto;font-size:.66rem;letter-spacing:.1em;
+    text-transform:uppercase;font-weight:700;color:var(--muted);white-space:nowrap;
+  }
+  .when.now{color:var(--accent)}
+  .step > p{font-size:.96rem}
+  .step > p:first-of-type{margin-top:.85rem}
+
+  h3{
+    font-family:var(--body);font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--muted);font-weight:700;margin:1.8rem 0 .6rem;
+  }
+
+  /* ---------- bloques para copiar ---------- */
+  .msg{
+    background:var(--surface);border:1px solid var(--line);border-radius:4px;
+    margin:.75rem 0 1.2rem;box-shadow:var(--shadow);overflow:hidden;
+  }
+  .msg-top{
+    display:flex;align-items:center;gap:.6rem;
+    padding:.6rem .8rem;border-bottom:1px solid var(--line-soft);
+  }
+  .msg-label{font-size:.85rem;font-weight:700;flex:1;min-width:0}
+  .msg-label em{font-style:normal;color:var(--muted);font-weight:400;display:block;font-size:.78rem}
+  .copy{
+    font-family:var(--body);font-size:.72rem;font-weight:700;letter-spacing:.06em;
+    text-transform:uppercase;cursor:pointer;white-space:nowrap;
+    background:var(--ink);color:var(--paper);border:0;border-radius:3px;
+    padding:.45rem .7rem;
+  }
+  .copy:hover{background:var(--accent)}
+  .copy:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .copy[data-done="1"]{background:var(--ok)}
+  pre{
+    margin:0;padding:.85rem .8rem;font-family:var(--body);font-size:.9rem;
+    line-height:1.5;white-space:pre-wrap;word-wrap:break-word;
+  }
+  pre b{background:var(--gold-soft);color:var(--gold);font-weight:700;padding:0 .15em;border-radius:2px}
+  details{border-top:1px solid var(--line-soft);background:var(--paper)}
+  summary{
+    cursor:pointer;padding:.5rem .8rem;font-size:.78rem;color:var(--muted);
+    font-weight:700;letter-spacing:.03em;
+  }
+  summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+  details p{margin:0;padding:0 .8rem .8rem;font-size:.87rem;color:var(--muted)}
+  .why{
+    padding:.6rem .8rem;border-top:1px solid var(--line-soft);
+    font-size:.85rem;background:var(--paper);
+  }
+  .why b{color:var(--accent)}
+
+  /* ---------- checklist ---------- */
+  .check{list-style:none;margin:.5rem 0 0;padding:0;display:flex;flex-direction:column;gap:.1rem}
+  .check li{border-bottom:1px solid var(--line-soft)}
+  .check label{display:flex;gap:.65rem;align-items:flex-start;padding:.6rem .1rem;cursor:pointer;font-size:.93rem}
+  .check input{margin:.3rem 0 0;accent-color:var(--accent);flex:none;width:1.05rem;height:1.05rem}
+  .check input:checked + span{color:var(--muted);text-decoration:line-through}
+  .check code{
+    font-family:var(--body);font-weight:700;color:var(--gold);font-size:.78rem;
+    letter-spacing:.04em;
+  }
+
+  /* ---------- tabla de errores ---------- */
+  .scroll{overflow-x:auto;margin:.6rem 0 0}
+  table{border-collapse:collapse;width:100%;font-size:.88rem;min-width:26rem}
+  th,td{text-align:left;padding:.55rem .6rem;border-bottom:1px solid var(--line-soft);vertical-align:top}
+  th{
+    font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
+    border-bottom:1px solid var(--line);
+  }
+  td:first-child{font-weight:700;white-space:nowrap}
+
+  footer{margin-top:3rem;border-top:2px solid var(--ink);padding-top:1rem;font-size:.87rem;color:var(--muted)}
+  footer p{margin:0 0 .5rem}
+  footer b{color:var(--ink)}
+
+  /* ---------- formulario generador ---------- */
+  .form{
+    background:var(--surface);border:1px solid var(--line);border-radius:4px;
+    padding:1rem .9rem;margin-top:1rem;box-shadow:var(--shadow);
+  }
+  .form h3{margin-top:1.6rem}
+  .form h3:first-of-type{margin-top:1.2rem}
+  .hint{font-size:.82rem;color:var(--muted);margin:.2rem 0 .8rem}
+  .field{display:flex;flex-direction:column;gap:.25rem;margin-bottom:.7rem;min-width:0}
+  .field label{
+    font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--muted);font-weight:700;
+  }
+  .field input,.field textarea{
+    font-family:var(--body);font-size:.95rem;color:var(--ink);
+    background:var(--paper);border:1px solid var(--line);border-radius:3px;
+    padding:.5rem .55rem;width:100%;
+  }
+  .field textarea{resize:vertical;line-height:1.45}
+  .field input:focus,.field textarea:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:var(--accent)}
+  .field input::placeholder,.field textarea::placeholder{color:var(--muted);opacity:.6}
+  .pair{display:grid;grid-template-columns:1fr 1fr;gap:.6rem}
+  .quote-box{
+    border-left:3px solid var(--gold);background:var(--gold-soft);
+    padding:.8rem .7rem .2rem;border-radius:0 3px 3px 0;margin-bottom:1rem;
+  }
+  .order-card{border:1px solid var(--line);border-radius:3px;margin-bottom:.6rem;background:var(--paper)}
+  .order-card > summary{
+    font-size:.82rem;font-weight:700;color:var(--ink);
+    letter-spacing:.02em;text-transform:none;padding:.65rem .7rem;
+  }
+  .order-card .inner{padding:0 .7rem .3rem}
+  .actions{display:flex;gap:.6rem;flex-wrap:wrap;margin-top:1.2rem}
+  .build,.wipe{
+    font-family:var(--body);font-size:.85rem;font-weight:700;letter-spacing:.04em;
+    cursor:pointer;border-radius:3px;padding:.7rem 1.1rem;border:1px solid var(--line);
+  }
+  .build{background:var(--accent);color:#fff;border-color:var(--accent);flex:1;min-width:12rem}
+  .build:hover{filter:brightness(1.08)}
+  .wipe{background:transparent;color:var(--muted)}
+  .build:focus-visible,.wipe:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+  .out-head{
+    font-family:var(--display);font-weight:700;font-size:1.1rem;
+    margin:1.8rem 0 .2rem;color:var(--ink);
+  }
+  .empty{
+    border:1px dashed var(--line);border-radius:4px;padding:1rem;
+    color:var(--muted);font-size:.9rem;margin-top:1.2rem;text-align:center;
+  }
+
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <p class="eyebrow">Winny Beauty Supply · Disputa con la proveedora</p>
+    <h1>Los 5 Reembolsos</h1>
+    <p class="standfirst">Cómo se pelea: la proveedora admitió la mala calidad, prometió el cambio, prometió pagar el envío — y no cumplió nada. Eso es lo que gana el caso, no la calidad de las pelucas.</p>
+    <div class="tally">
+      <span><b>5</b> casos abiertos</span>
+      <span><b>1</b> sola proveedora</span>
+      <span><b>1</b> mismo relato en los 5</span>
+    </div>
+  </header>
+
+  <div class="warn">
+    <h2>Antes de tocar nada</h2>
+    <p><b>No inventes ni una sola frase de ella.</b> Alibaba tiene el historial completo del chat de su plataforma. Una cita falsa no hace perder un caso: hace perder los cinco, incluidos los que ya tenías ganados. Solo se copia lo que ella escribió textual.</p>
+    <p>Si algo te lo prometió por WhatsApp y no por Alibaba, no lo presentes como si fuera de Alibaba. Se presenta como WhatsApp — y además se le hace repetir dentro de Alibaba. Ese es el Paso 1.</p>
+  </div>
+
+  <section class="step">
+    <div class="step-head">
+      <span class="step-num">1</span>
+      <h2>Escríbele a ella, dentro de Alibaba</h2>
+      <span class="when now">Hoy</span>
+    </div>
+    <p>WhatsApp es evidencia débil: Alibaba no puede verificar quién escribió y sabe que se falsifica. El chat dentro de Alibaba es evidencia fuerte: está en su propio servidor y el equipo de disputas lo lee directo.</p>
+    <p>La jugada es hacer que ella <b>repita dentro de Alibaba lo que ya prometió por fuera</b>. Un solo <em>“yes, I promised to replace them”</em> escrito ahí vale más que todas tus capturas de WhatsApp juntas.</p>
+    <p><b>Tono calmado.</b> Nada de amenazas, y no le digas que estás juntando pruebas. Preséntalo como que Alibaba te pide confirmar detalles. Un mensaje a la vez: si mandas los cinco de golpe, contesta el fácil y esquiva los demás.</p>
+
+    <h3>Mensaje 1 — que admita la calidad y el cambio</h3>
+    <div class="msg">
+      <div class="msg-top">
+        <div class="msg-label">Para el chat de Alibaba <em>Buscas que escriba “yes”</em></div>
+        <button class="copy" data-copy="m1">Copiar</button>
+      </div>
+      <pre id="m1">Hi Jessica, good morning.
+
+I want to solve this calmly with you. Alibaba is asking me to confirm the details of our agreement, so I need to write down exactly what we agreed.
+
+Can you please confirm here: you agreed to replace the wigs from these orders with new wigs of better quality, because the ones I received were not the quality we agreed on. Is that correct?
+
+Please confirm yes or no here in Alibaba so I have it clear. Thank you.</pre>
+      <details><summary>Ver traducción</summary><p>Hola Jessica, buenos días. Quiero resolver esto con calma contigo. Alibaba me está pidiendo que confirme los detalles de nuestro acuerdo, así que necesito dejar por escrito exactamente qué acordamos. ¿Puedes confirmarme aquí: acordaste reemplazar las pelucas de estas órdenes por pelucas nuevas de mejor calidad, porque las que recibí no eran de la calidad acordada. ¿Es correcto? Confírmame sí o no aquí en Alibaba para tenerlo claro. Gracias.</p></details>
+      <div class="why">Si contesta que sí, admite dos cosas de un golpe: <b>que hay un defecto</b> y <b>que se comprometió a repararlo</b>. Es el corazón del caso.</div>
+    </div>
+
+    <h3>Mensaje 2 — la dirección de devolución</h3>
+    <div class="msg">
+      <div class="msg-top">
+        <div class="msg-label">Para el chat de Alibaba <em>Te sirve conteste o no conteste</em></div>
+        <button class="copy" data-copy="m2">Copiar</button>
+      </div>
+      <pre id="m2">Jessica, you told me you would pay the return shipping and that you would send me the return address.
+
+I am still waiting for that address. Please send me now:
+1. The full return address.
+2. The name and phone number of the person who receives.
+3. Confirmation that you pay the return freight, as you promised.
+
+I am ready to send the wigs back today. I only need the address from you.</pre>
+      <details><summary>Ver traducción</summary><p>Jessica, me dijiste que ibas a pagar el envío de devolución y que me ibas a mandar la dirección. Sigo esperando esa dirección. Mándame ahora: 1. La dirección completa de devolución. 2. El nombre y teléfono de quien recibe. 3. La confirmación de que tú pagas el flete, como prometiste. Estoy lista para devolver las pelucas hoy. Solo me falta la dirección de tu parte.</p></details>
+      <div class="why">Si te la da, queda escrito en Alibaba que acepta la devolución y paga el flete. <b>Si no te la da, es todavía mejor:</b> su silencio queda con fecha en el chat y destruye la defensa favorita del proveedor — <em>“la compradora nunca devolvió la mercancía”</em>. Guarda la captura aunque no responda.<br><br><b>No devuelvas nada todavía.</b> Hasta que Alibaba te lo indique por escrito dentro del caso, las pelucas se quedan contigo: son tu prueba física.</div>
+    </div>
+
+    <h3>Mensaje 3 — el envío que nunca hizo</h3>
+    <div class="msg">
+      <div class="msg-top">
+        <div class="msg-label">Para el chat de Alibaba <em>Cambia la fecha marcada</em></div>
+        <button class="copy" data-copy="m3">Copiar</button>
+      </div>
+      <pre id="m3">Jessica, you told me several times that you would send the replacement wigs.
+
+The last date you gave me was <b>[FECHA QUE ELLA TE DIO]</b>. Nothing has arrived and there is no tracking number.
+
+Can you tell me clearly: did you ship the replacement or not? If you shipped it, please send me the tracking number now. If you did not ship it, please tell me why.</pre>
+      <details><summary>Ver traducción</summary><p>Jessica, me dijiste varias veces que ibas a enviar las pelucas de reemplazo. La última fecha que me diste fue [FECHA]. No ha llegado nada y no hay número de guía. ¿Puedes decirme claramente: enviaste el reemplazo o no? Si lo enviaste, mándame el tracking ahora. Si no lo enviaste, dime por qué.</p></details>
+      <div class="why">Aquí <b>no hay respuesta buena para ella.</b> Cualquier excusa que dé — la fábrica estaba cerrada, esperaba stock, la semana que viene seguro — es una confesión de incumplimiento con fecha.</div>
+    </div>
+
+    <h3>Mensaje 4 — las 5 órdenes juntas</h3>
+    <div class="msg">
+      <div class="msg-top">
+        <div class="msg-label">Para el chat de Alibaba <em>Pon los 5 números</em></div>
+        <button class="copy" data-copy="m4">Copiar</button>
+      </div>
+      <pre id="m4">Jessica, this is not one order. It is 5 orders with the same problem:
+
+<b>[LOS 5 NÚMEROS DE ORDEN, UNO POR LÍNEA]</b>
+
+All 5 have the same quality problem, and for all 5 you promised a solution that never arrived. Do you agree that these 5 orders have the same problem? Please answer here.</pre>
+      <details><summary>Ver traducción</summary><p>Jessica, esto no es una sola orden. Son 5 órdenes con el mismo problema: [los 5 números]. Las 5 tienen el mismo problema de calidad, y en las 5 prometiste una solución que nunca llegó. ¿Estás de acuerdo en que estas 5 órdenes tienen el mismo problema? Responde aquí.</p></details>
+      <div class="why">Un proveedor que falla una vez tuvo mala suerte. Uno que falla cinco veces y promete cinco veces sin cumplir tiene <b>un patrón de conducta</b> — y eso pesa en los cinco casos a la vez.</div>
+    </div>
+
+    <h3>Mensaje 5 — el cierre</h3>
+    <div class="msg">
+      <div class="msg-top">
+        <div class="msg-label">Solo después de las respuestas anteriores</div>
+        <button class="copy" data-copy="m5">Copiar</button>
+      </div>
+      <pre id="m5">Jessica, I have been waiting for months and the wigs never arrived. I cannot sell these wigs to my customers, so I have lost the money of the 5 orders.
+
+Since the replacement never came and I never received the return address, I am asking Alibaba for the refund of the 5 orders. This is not personal — I simply cannot keep waiting.
+
+If you prefer to solve it directly, tell me today.</pre>
+      <details><summary>Ver traducción</summary><p>Jessica, llevo meses esperando y las pelucas nunca llegaron. No puedo vender estas pelucas a mis clientas, así que perdí el dinero de las 5 órdenes. Como el reemplazo nunca llegó y nunca recibí la dirección de devolución, le estoy pidiendo a Alibaba el reembolso de las 5 órdenes. No es personal, simplemente no puedo seguir esperando. Si prefieres resolverlo directo, dímelo hoy.</p></details>
+      <div class="why">Deja constancia de que <b>le diste la oportunidad de arreglarlo</b>. El equipo de disputas valora mucho al comprador que negoció de buena fe antes de escalar.</div>
+    </div>
+
+    <h3>Si empieza a negar todo</h3>
+    <div class="msg">
+      <div class="msg-top">
+        <div class="msg-label">Una sola respuesta, y de ahí solo hablas con Alibaba</div>
+        <button class="copy" data-copy="m6">Copiar</button>
+      </div>
+      <pre id="m6">Jessica, I have all our conversation saved, including the messages where you agreed to replace the wigs and to pay the return shipping. I will let Alibaba review everything.</pre>
+      <details><summary>Ver traducción</summary><p>Jessica, tengo toda nuestra conversación guardada, incluyendo los mensajes donde aceptaste reemplazar las pelucas y pagar el envío de devolución. Voy a dejar que Alibaba revise todo.</p></details>
+      <div class="why">Y <b>captura todo el chat en ese momento.</b> Un proveedor que se siente descubierto a veces borra. En Alibaba no puede borrar del servidor, pero tú necesitas tu copia igual.</div>
+    </div>
+  </section>
+
+  <section class="step">
+    <div class="step-head">
+      <span class="step-num">2</span>
+      <h2>Saca las capturas</h2>
+      <span class="when">Esta semana</span>
+    </div>
+    <p>Pantalla completa, con el nombre de ella arriba y la fecha visible. <b>Sin editar, sin flechas, sin círculos rojos</b> — si sospechan retoque, descartan la imagen entera. Lo que quieras señalar lo explicas en el escrito.</p>
+    <p>Nómbralas <code>P-01</code>, <code>P-02</code>, <code>P-03</code>… y usa el mismo número en los 5 casos. Un revisor que no encuentra la prueba, decide que no existe.</p>
+
+    <h3>Lo que prometió y no cumplió</h3>
+    <ul class="check">
+      <li><label><input type="checkbox" data-k="a1"><span><code>A-1</code> — Ella dice que va a enviar el reemplazo</span></label></li>
+      <li><label><input type="checkbox" data-k="a2"><span><code>A-2</code> — Ella da una fecha o plazo concreto</span></label></li>
+      <li><label><input type="checkbox" data-k="a3"><span><code>A-3</code> — Tus mensajes preguntando después de esa fecha, y su silencio</span></label></li>
+      <li><label><input type="checkbox" data-k="a4"><span><code>A-4</code> — La orden en Alibaba mostrando que no hay ningún reenvío</span></label></li>
+    </ul>
+
+    <h3>El cambio por mejor calidad</h3>
+    <ul class="check">
+      <li><label><input type="checkbox" data-k="b1"><span><code>B-1</code> — Ella ofrece cambiarlas por otras de mejor calidad</span></label></li>
+      <li><label><input type="checkbox" data-k="b2"><span><code>B-2</code> — Tu reclamo justo antes <em>(súbelos siempre en pareja: sin tu reclamo, su oferta parece un regalo y no una reparación)</em></span></label></li>
+      <li><label><input type="checkbox" data-k="b3"><span><code>B-3</code> — Ella reconoce que esas salieron de calidad más baja</span></label></li>
+      <li><label><input type="checkbox" data-k="b4"><span><code>B-4</code> — Lo acordado antes de comprar: calidad, largo, densidad, tipo de frontal</span></label></li>
+    </ul>
+
+    <h3>Donde acepta su culpa</h3>
+    <ul class="check">
+      <li><label><input type="checkbox" data-k="c1"><span><code>C-1</code> — Todo “sorry”, “my fault”, “our mistake”, “I apologize”. Cada disculpa es una admisión, aunque parezca pequeña</span></label></li>
+      <li><label><input type="checkbox" data-k="c2"><span><code>C-2</code> — Donde culpa a su fábrica <em>(también es admisión: acepta que salió mal, solo cambia a quién culpar — frente a ti la responsable es ella)</em></span></label></li>
+      <li><label><input type="checkbox" data-k="c3"><span><code>C-3</code> — Donde ofrece descuento o reembolso parcial <em>(nadie devuelve dinero por un producto que está bien)</em></span></label></li>
+    </ul>
+
+    <h3>El envío y la dirección</h3>
+    <ul class="check">
+      <li><label><input type="checkbox" data-k="d1"><span><code>D-1</code> — Ella dice que paga el envío de devolución</span></label></li>
+      <li><label><input type="checkbox" data-k="d2"><span><code>D-2</code> — Ella dice que te va a dar la dirección</span></label></li>
+      <li><label><input type="checkbox" data-k="d3"><span><code>D-3</code> — Todas las veces que se la pediste</span></label></li>
+      <li><label><input type="checkbox" data-k="d4"><span><code>D-4</code> — Los días que pasaron sin que la diera</span></label></li>
+    </ul>
+
+    <h3>El producto — una por una de las 5 órdenes</h3>
+    <ul class="check">
+      <li><label><input type="checkbox" data-k="e1"><span><code>E-1</code> — Video continuo de la peluca completa, con el largo medido con cinta a la vista</span></label></li>
+      <li><label><input type="checkbox" data-k="e2"><span><code>E-2</code> — Foto de la etiqueta y el empaque con el código</span></label></li>
+      <li><label><input type="checkbox" data-k="e3"><span><code>E-3</code> — La prueba del fuego, si te vendieron sintético como humano</span></label></li>
+      <li><label><input type="checkbox" data-k="e4"><span><code>E-4</code> — Lo prometido en el anuncio contra lo que llegó, lado a lado</span></label></li>
+      <li><label><input type="checkbox" data-k="f1"><span><code>F-1</code> — Captura de la página del producto como estaba al comprar <em>(si ella cambia el anuncio, esto es lo único que prueba qué te vendió)</em></span></label></li>
+    </ul>
+
+    <div class="warn" style="margin-top:1.6rem">
+      <h2>La prueba del fuego</h2>
+      <p>Un mechón pequeño, en un plato, con cuidado. El <b>cabello humano</b> se quema lento, huele a pelo quemado y deja ceniza que se deshace en polvo. La <b>fibra sintética</b> se derrite, hace bolita dura de plástico y huele a plástico quemado.</p>
+      <p>Grábalo en <b>un solo video sin cortes</b>, y muestra primero la etiqueta y la peluca en ese mismo video. Si lo cortas, no prueba que es esa peluca. Esta es la prueba que convierte “no me gustó” en “no es lo que me describieron”, y Alibaba la conoce bien.</p>
+    </div>
+  </section>
+
+  <section class="step">
+    <div class="step-head">
+      <span class="step-num">3</span>
+      <h2>Los 5 escritos, armados solos</h2>
+      <span class="when">En los 5 casos</span>
+    </div>
+    <p>Escribe tus datos una sola vez. Abajo salen <b>los 5 escritos completos en inglés</b>, cada uno con su número de orden y su monto, listos para copiar y pegar en cada reembolso.</p>
+    <p><b>Lo que no tengas, déjalo vacío</b> — ese punto desaparece solo del escrito. Nunca se inventa una frase de ella: eso hace perder los 5 casos de una vez.</p>
+
+    <div class="form">
+      <div class="field">
+        <label for="f-nombre">Con qué nombre firmas</label>
+        <input id="f-nombre" type="text" placeholder="Winny — Winny Beauty Supply">
+      </div>
+
+      <h3>Lo que ella escribió — igual para los 5</h3>
+      <p class="hint">Copia sus frases <b>textuales</b>, tal como las escribió. Si fue en inglés, déjalas en inglés.</p>
+
+      <div class="field">
+        <label for="f-fecha-reclamo">Fecha en que le reclamaste la calidad</label>
+        <input id="f-fecha-reclamo" type="text" placeholder="2026-03-15">
+      </div>
+
+      <div class="quote-box">
+        <div class="field">
+          <label for="f-cita-admite">Frase donde ella admite el problema</label>
+          <textarea id="f-cita-admite" rows="2" placeholder="sorry, the quality is not good this time"></textarea>
+        </div>
+        <div class="pair">
+          <div class="field"><label for="f-fecha-admite">Fecha</label><input id="f-fecha-admite" type="text" placeholder="2026-03-16"></div>
+          <div class="field"><label for="f-p-admite">Prueba</label><input id="f-p-admite" type="text" placeholder="P-01"></div>
+        </div>
+      </div>
+
+      <div class="quote-box">
+        <div class="field">
+          <label for="f-cita-cambio">Frase donde promete cambiarlas por mejor calidad</label>
+          <textarea id="f-cita-cambio" rows="2" placeholder="I will send you new wigs, better quality"></textarea>
+        </div>
+        <div class="pair">
+          <div class="field"><label for="f-fecha-cambio">Fecha</label><input id="f-fecha-cambio" type="text" placeholder="2026-03-16"></div>
+          <div class="field"><label for="f-p-cambio">Prueba</label><input id="f-p-cambio" type="text" placeholder="P-02"></div>
+        </div>
+        <div class="pair">
+          <div class="field"><label for="f-fecha-envio-prometida">Fecha de envío que prometió</label><input id="f-fecha-envio-prometida" type="text" placeholder="2026-04-01"></div>
+          <div class="field"><label for="f-fechas-seguimiento">Días que le preguntaste</label><input id="f-fechas-seguimiento" type="text" placeholder="2026-04-10, 2026-04-22"></div>
+        </div>
+      </div>
+
+      <div class="quote-box">
+        <div class="field">
+          <label for="f-cita-envio">Frase donde promete pagar el envío y dar la dirección</label>
+          <textarea id="f-cita-envio" rows="2" placeholder="I will pay the shipping, I will send you the address"></textarea>
+        </div>
+        <div class="pair">
+          <div class="field"><label for="f-fecha-envio">Fecha</label><input id="f-fecha-envio" type="text" placeholder="2026-03-20"></div>
+          <div class="field"><label for="f-p-envio">Prueba</label><input id="f-p-envio" type="text" placeholder="P-03"></div>
+        </div>
+        <div class="pair">
+          <div class="field"><label for="f-fechas-pediste">Días que pediste la dirección</label><input id="f-fechas-pediste" type="text" placeholder="2026-03-25, 2026-04-08"></div>
+          <div class="field"><label for="f-p-pediste">Prueba</label><input id="f-p-pediste" type="text" placeholder="P-05"></div>
+        </div>
+      </div>
+
+      <h3>Las 5 órdenes</h3>
+      <p class="hint">Llena las que tengas. Una orden sin número no genera escrito.</p>
+      <div id="orders"></div>
+
+      <div class="actions">
+        <button class="build" id="build">Generar los 5 escritos</button>
+        <button class="wipe" id="wipe">Borrar todo</button>
+      </div>
+      <p class="hint" id="saved-note">Lo que escribas se guarda en este teléfono. Puedes cerrar y volver.</p>
+    </div>
+
+    <div id="out"></div>
+  </section>
+
+  <section class="step">
+    <div class="step-head">
+      <span class="step-num">4</span>
+      <h2>Responde cada correo</h2>
+      <span class="when">El mismo día</span>
+    </div>
+    <p>Todo correo del equipo se responde el mismo día, aunque sea para decir “recibido, envío la información en 24 horas”. <b>Alibaba cierra casos por silencio, no por falta de razón.</b> Y repite el número de orden en la primera línea: ellos manejan cientos de casos.</p>
+
+    <h3>Si ella dice que la calidad está bien</h3>
+    <div class="msg">
+      <div class="msg-top">
+        <div class="msg-label">La agarras en su propia contradicción</div>
+        <button class="copy" data-copy="r2">Copiar</button>
+      </div>
+      <pre id="r2">Dear Alibaba Case Team,
+
+Order number: <b>[NÚMERO]</b>
+
+The supplier now states that the quality is acceptable. This contradicts her own written statements in the Alibaba chat record.
+
+On <b>[FECHA]</b> she wrote: "<b>[CITA TEXTUAL]</b>".
+On <b>[FECHA]</b> she agreed to replace the wigs with better quality wigs: "<b>[CITA TEXTUAL]</b>".
+
+A supplier does not agree to replace goods with "better quality" goods if the goods delivered were correct. Her own message confirms the goods were not as described.
+
+I also attach <b>[P-##]</b>, the burn test video, which objectively shows the fiber melts into plastic. Human hair burns to ash. This is not a matter of opinion.
+
+Best regards,
+<b>[TU NOMBRE]</b> — Winny Beauty Supply</pre>
+      <div class="why">No discutas de calidad. <b>Nadie ofrece cambiar algo “por mejor calidad” si lo que mandó estaba bien.</b> Esa frase de ella, sola, prueba el defecto.</div>
+    </div>
+
+    <h3>Si dice que nunca devolviste la mercancía</h3>
+    <div class="msg">
+      <div class="msg-top">
+        <div class="msg-label">La defensa más común — esta la desarma</div>
+        <button class="copy" data-copy="r3">Copiar</button>
+      </div>
+      <pre id="r3">Dear Alibaba Case Team,
+
+Order number: <b>[NÚMERO]</b>
+
+The supplier states that I did not return the goods. The reason is documented:
+
+1. On <b>[FECHA]</b> the supplier stated she would pay the return shipping: "<b>[CITA]</b>" <b>[P-##]</b>.
+2. On <b>[FECHA]</b> she stated she would send me the return address: "<b>[CITA]</b>" <b>[P-##]</b>.
+3. I requested that address on <b>[FECHAS]</b> <b>[P-##]</b>. She never provided it.
+
+I could not return goods to an address that was never given to me. The goods are still in my possession, unused and in the original condition, and I am ready to ship them back today at the supplier's cost, as she agreed, as soon as the address is provided.
+
+Best regards,
+<b>[TU NOMBRE]</b></pre>
+    </div>
+
+    <h3>Si ofrecen un reembolso parcial que no te sirve</h3>
+    <div class="msg">
+      <div class="msg-top">
+        <div class="msg-label">Da una razón comercial y ofrece dos salidas</div>
+        <button class="copy" data-copy="r4">Copiar</button>
+      </div>
+      <pre id="r4">Dear Alibaba Case Team,
+
+Order number: <b>[NÚMERO]</b>
+
+Thank you for the proposal. I cannot accept a partial refund of USD <b>[MONTO OFRECIDO]</b> for the following reason: the goods are not usable for my business at all. I sell wigs to end customers and I cannot sell <b>[EL DEFECTO]</b> — my customers return them and I lose the customer.
+
+The goods have no commercial value for me, so a partial refund leaves me with a total loss.
+
+I request the full refund of USD <b>[MONTO PAGADO]</b>, and I will return the goods at the supplier's cost as she agreed in writing.
+
+If the supplier prefers, I accept the alternative she herself proposed on <b>[FECHA]</b>: replacement with the correct quality, shipped within 15 days with a tracking number. Either solution is acceptable. What I cannot accept is keeping goods I cannot sell.
+
+Best regards,
+<b>[TU NOMBRE]</b></pre>
+      <div class="why">El equipo favorece al comprador que se ve razonable, no al que solo exige. <b>Y si aceptan el reemplazo, ganas igual.</b><br><br>Ojo: si el parcial es alto y las pelucas te sirven aunque sea para vender más barato, piénsalo. Un acuerdo hoy es seguro. Solo no aceptes por cansancio.</div>
+    </div>
+
+    <h3>Si el fallo sale en contra — apelación</h3>
+    <div class="msg">
+      <div class="msg-top">
+        <div class="msg-label">Solo hechos numerados, cero emoción</div>
+        <button class="copy" data-copy="r6">Copiar</button>
+      </div>
+      <pre id="r6">Dear Alibaba Case Team,
+
+Order number: <b>[NÚMERO]</b>
+
+I would like to appeal the decision on this case, based on evidence that shows the supplier did not fulfill an agreement she made in writing:
+
+1. The supplier acknowledged the quality problem in writing on <b>[FECHA]</b> <b>[P-##]</b>.
+2. She agreed to replace the goods with better quality goods on <b>[FECHA]</b> <b>[P-##]</b> and gave a shipping date of <b>[FECHA]</b>.
+3. No replacement was ever shipped. There is no tracking number for any replacement shipment.
+4. She agreed to pay return shipping and to provide a return address <b>[P-##]</b>, and never provided the address despite my requests on <b>[FECHAS]</b>.
+5. The same pattern occurred on 5 separate orders: <b>[LOS 5 NÚMEROS]</b>.
+
+The decision appears to be based on the return of the goods not being completed. The return could not be completed because the supplier never provided the return address she committed to provide. I remain ready to return the goods at her cost.
+
+I respectfully request a review of this case.
+
+Best regards,
+<b>[TU NOMBRE]</b> — Winny Beauty Supply</pre>
+      <div class="why">En la apelación <b>ataca solo la razón por la que perdiste</b>. No repitas todo el caso otra vez: señala el punto que el revisor entendió mal.</div>
+    </div>
+
+    <h3>En todos los correos, una línea más</h3>
+    <div class="msg">
+      <div class="msg-top">
+        <div class="msg-label">A veces los 5 casos caen en revisores distintos</div>
+        <button class="copy" data-copy="r7">Copiar</button>
+      </div>
+      <pre id="r7">Note: this is one of 5 orders with the same supplier presenting the same problem (<b>[LOS 5 NÚMEROS]</b>). The supplier promised a replacement in all 5 and shipped none.</pre>
+      <div class="why">Si nadie ve el patrón completo, cada caso parece un accidente aislado. <b>Tú tienes que hacérselo ver.</b></div>
+    </div>
+  </section>
+
+  <section class="step">
+    <div class="step-head">
+      <span class="step-num">5</span>
+      <h2>Lo que hace perder estos casos</h2>
+      <span class="when">Cada día</span>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>El error</th><th>Por qué te hunde</th></tr></thead>
+        <tbody>
+          <tr><td>Dejar vencer una fecha</td><td>Cierre automático en tu contra, tengas o no la razón. Responde 24 horas antes, nunca el último día</td></tr>
+          <tr><td>Citar algo que no dijo</td><td>Evidencia falsa: pierdes los 5 casos, incluidos los buenos</td></tr>
+          <tr><td>Capturas recortadas</td><td>Sin nombre ni fecha no prueban quién lo dijo. Las descartan</td></tr>
+          <tr><td>Contar historias distintas</td><td>El revisor concluye que exageras y te baja la credibilidad en los 5</td></tr>
+          <tr><td>Escribir en español</td><td>El equipo trabaja en inglés; lo pasan por traductor y se pierde el matiz</td></tr>
+          <tr><td>Insultos o amenazas</td><td>Del otro lado hay una persona leyendo. Te quita la razón moral</td></tr>
+          <tr><td>Pedir más de lo pagado</td><td>Los perjuicios no aplican aquí. Pide el monto pagado y nada más</td></tr>
+          <tr><td>Devolver por tu cuenta</td><td>Te quedas sin mercancía, sin dinero y sin la prueba física</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    <p><b>Respalda hoy el chat completo</b>, no solo las capturas que crees que sirven. A veces el mensaje que gana el caso es uno que hoy te parece que no dice nada. Si Alibaba te pide reenviar evidencia en dos semanas y ya cambiaste de teléfono, se acabó.</p>
+    <p>Y no aceptes un acuerdo solo por cansancio. Los proveedores en disputa apuestan a que te agotes y aceptes el 30%. Tú tienes lo más difícil de conseguir: <b>su admisión por escrito.</b> Con eso, el tiempo juega a tu favor.</p>
+  </footer>
+</div>
+
+<script>
+  var store = {
+    get: function(k){ try { return localStorage.getItem(k); } catch(e){ return null; } },
+    set: function(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
+  };
+
+  document.querySelectorAll('.check input').forEach(function(box){
+    var key = 'winny-reembolsos-' + box.dataset.k;
+    if (store.get(key) === '1') box.checked = true;
+    box.addEventListener('change', function(){
+      store.set(key, box.checked ? '1' : '0');
+    });
+  });
+
+  function wireCopy(root){
+  root.querySelectorAll('.copy').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var src = document.getElementById(btn.dataset.copy);
+      if (!src) return;
+      var text = src.innerText;
+      var done = function(){
+        btn.textContent = 'Copiado';
+        btn.dataset.done = '1';
+        setTimeout(function(){ btn.textContent = 'Copiar'; btn.dataset.done = '0'; }, 2200);
+      };
+      var manual = function(){
+        var range = document.createRange();
+        range.selectNodeContents(src);
+        var sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        btn.textContent = 'Selecciónalo';
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(manual);
+      } else {
+        manual();
+      }
+    });
+  });
+  }
+  wireCopy(document);
+
+  /* ---------- generador de los 5 escritos ---------- */
+  (function(){
+    var ordersBox = document.getElementById('orders');
+    if (!ordersBox) return;
+
+    var ORDER_FIELDS = [
+      {k:'num',   label:'Número de orden',            ph:'123456789012345', t:'text'},
+      {k:'monto', label:'Monto pagado (USD)',         ph:'480', t:'text'},
+      {k:'pago',  label:'Fecha de pago',              ph:'2026-02-10', t:'text'},
+      {k:'recib', label:'Fecha en que llegó',         ph:'2026-03-05', t:'text'},
+      {k:'cant',  label:'Cuántas pelucas',            ph:'10', t:'text'},
+      {k:'cal',   label:'Calidad prometida',          ph:'100% human hair, 26 inch, 13x4 frontal', t:'text'},
+      {k:'def',   label:'El defecto concreto',        ph:'The wigs are synthetic fiber, not human hair', t:'area'},
+      {k:'pdesc', label:'Prueba de la descripción',   ph:'P-09', t:'text'},
+      {k:'pprod', label:'Pruebas del producto',       ph:'P-08, P-10', t:'text'}
+    ];
+
+    for (var i = 1; i <= 5; i++) {
+      var card = document.createElement('details');
+      card.className = 'order-card';
+      if (i === 1) card.open = true;
+      var html = '<summary>Orden ' + i + '</summary><div class="inner">';
+      for (var j = 0; j < ORDER_FIELDS.length; j++) {
+        var f = ORDER_FIELDS[j];
+        var id = 'o' + i + '-' + f.k;
+        html += '<div class="field"><label for="' + id + '">' + f.label + '</label>';
+        html += f.t === 'area'
+          ? '<textarea id="' + id + '" rows="2" placeholder="' + f.ph + '"></textarea>'
+          : '<input id="' + id + '" type="text" placeholder="' + f.ph + '">';
+        html += '</div>';
+      }
+      card.innerHTML = html + '</div>';
+      ordersBox.appendChild(card);
+    }
+
+    var inputs = document.querySelectorAll('.form input, .form textarea');
+    var KEY = 'winny-escritos-v1';
+
+    function readAll(){
+      var data = {};
+      inputs.forEach(function(el){ data[el.id] = el.value; });
+      return data;
+    }
+    function save(){
+      try { localStorage.setItem(KEY, JSON.stringify(readAll())); } catch(e){}
+    }
+    function load(){
+      try {
+        var raw = localStorage.getItem(KEY);
+        if (!raw) return;
+        var data = JSON.parse(raw);
+        inputs.forEach(function(el){ if (data[el.id]) el.value = data[el.id]; });
+      } catch(e){}
+    }
+    load();
+    inputs.forEach(function(el){ el.addEventListener('input', save); });
+
+    function v(id){
+      var el = document.getElementById(id);
+      return el ? el.value.trim() : '';
+    }
+    function ev(p){ return p ? ' (evidence ' + p + ')' : ''; }
+
+    function activeOrders(){
+      var list = [];
+      for (var i = 1; i <= 5; i++) {
+        if (v('o' + i + '-num')) list.push(i);
+      }
+      return list;
+    }
+
+    function buildOne(i, allNums){
+      var num   = v('o'+i+'-num');
+      var monto = v('o'+i+'-monto');
+      var pago  = v('o'+i+'-pago');
+      var recib = v('o'+i+'-recib');
+      var cant  = v('o'+i+'-cant');
+      var cal   = v('o'+i+'-cal');
+      var def   = v('o'+i+'-def');
+      var pdesc = v('o'+i+'-pdesc');
+      var pprod = v('o'+i+'-pprod');
+
+      var head = ['SUBJECT: Goods not as described + supplier failed to honor the replacement agreement', ''];
+      head.push('Order number: ' + num);
+      if (monto) head.push('Amount paid: USD ' + monto);
+      if (pago)  head.push('Payment date: ' + pago);
+      if (recib) head.push('Goods received on: ' + recib);
+
+      var secs = [];
+
+      if (cant || cal || monto) {
+        var s1 = 'WHAT I ORDERED AND PAID FOR\n';
+        s1 += 'I ordered ' + (cant ? cant + ' wigs' : 'wigs');
+        if (cal) s1 += ' described as ' + cal;
+        s1 += '.';
+        if (monto) s1 += ' I paid USD ' + monto + (pago ? ' on ' + pago : '') + '.';
+        if (pdesc) s1 += ' The product description at the time of purchase is attached as evidence ' + pdesc + '.';
+        secs.push(s1);
+      }
+
+      if (def) {
+        var s2 = 'WHAT I ACTUALLY RECEIVED\n';
+        s2 += 'The goods received are not the quality described. ' + def + '.';
+        if (pprod) s2 += ' Evidence: ' + pprod + ' (photos, video and measurements).';
+        secs.push(s2);
+      }
+
+      var citaAdmite = v('f-cita-admite');
+      if (citaAdmite) {
+        var s3 = 'THE SUPPLIER ADMITTED THE PROBLEM\n';
+        var fr = v('f-fecha-reclamo');
+        s3 += 'After I reported the quality problem' + (fr ? ' on ' + fr : '') + ', the supplier acknowledged it in writing. ';
+        s3 += 'Her exact words were: "' + citaAdmite + '"';
+        var fa = v('f-fecha-admite');
+        s3 += ev(v('f-p-admite')) + (fa ? ', dated ' + fa : '') + '.';
+        secs.push(s3);
+      }
+
+      var citaCambio = v('f-cita-cambio');
+      if (citaCambio) {
+        var s4 = 'THE SUPPLIER AGREED TO REPLACE THE GOODS AND NEVER DID\n';
+        var fc = v('f-fecha-cambio');
+        s4 += (fc ? 'On ' + fc + ', the' : 'The') + ' supplier agreed to replace these wigs with new wigs of better quality. ';
+        s4 += 'Her exact words were: "' + citaCambio + '"' + ev(v('f-p-cambio')) + '.';
+        var fp = v('f-fecha-envio-prometida');
+        if (fp) s4 += ' She gave me a shipping date of ' + fp + '.';
+        s4 += ' Nothing was ever shipped. There is no tracking number and no new shipment exists on this order.';
+        var fs = v('f-fechas-seguimiento');
+        if (fs) s4 += ' I followed up on ' + fs + ' and received no delivery.';
+        secs.push(s4);
+      }
+
+      var citaEnvio = v('f-cita-envio');
+      if (citaEnvio) {
+        var s5 = 'THE SUPPLIER AGREED TO PAY RETURN SHIPPING AND NEVER SENT THE ADDRESS\n';
+        var fe = v('f-fecha-envio');
+        s5 += (fe ? 'On ' + fe + ', the' : 'The') + ' supplier stated she would pay the return shipping and would send me the return address. ';
+        s5 += 'Her exact words were: "' + citaEnvio + '"' + ev(v('f-p-envio')) + '.';
+        var fpd = v('f-fechas-pediste');
+        if (fpd) s5 += ' I requested the return address on ' + fpd + ev(v('f-p-pediste')) + ' and she never provided it.';
+        s5 += ' I could not return the goods because the supplier never gave me the address she promised.';
+        s5 += ' I am still willing to return the goods if Alibaba instructs me and the address is provided.';
+        secs.push(s5);
+      }
+
+      if (allNums.length > 1) {
+        var s6 = 'THIS IS NOT AN ISOLATED CASE\n';
+        s6 += 'The same problem occurred on ' + allNums.length + ' separate orders with this supplier: ' + allNums.join(', ') + '.';
+        s6 += ' In all of them the goods were not as described, the supplier admitted the problem, promised a replacement, and never shipped it.';
+        secs.push(s6);
+      }
+
+      var s7 = 'WHAT I REQUEST\n';
+      s7 += 'Full refund' + (monto ? ' of USD ' + monto : '') + ' for this order.';
+      if (citaEnvio) s7 += " The goods are available for return at the supplier's cost, as she agreed, once she provides the return address.";
+      secs.push(s7);
+
+      var body = secs.map(function(s, n){ return (n + 1) + '. ' + s; }).join('\n\n');
+      var tail = '\n\nAll evidence is attached and numbered. The chat records inside Alibaba Message Center confirm the statements quoted above.';
+      var nombre = v('f-nombre');
+      if (nombre) tail += '\n\n' + nombre;
+
+      return head.join('\n') + '\n\n' + body + tail;
+    }
+
+    function esc(s){
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    document.getElementById('build').addEventListener('click', function(){
+      var out = document.getElementById('out');
+      var list = activeOrders();
+      out.innerHTML = '';
+
+      if (!list.length) {
+        out.innerHTML = '<p class="empty">Escribe al menos un número de orden arriba y vuelve a tocar el botón.</p>';
+        return;
+      }
+
+      var nums = list.map(function(i){ return v('o'+i+'-num'); });
+      var head = document.createElement('p');
+      head.className = 'out-head';
+      head.textContent = list.length === 1 ? 'Tu escrito' : 'Tus ' + list.length + ' escritos';
+      out.appendChild(head);
+
+      list.forEach(function(i, n){
+        var text = buildOne(i, nums);
+        var id = 'gen-' + i;
+        var box = document.createElement('div');
+        box.className = 'msg';
+        box.innerHTML =
+          '<div class="msg-top"><div class="msg-label">Caso ' + (n+1) + ' · orden ' + esc(v('o'+i+'-num')) +
+          '<em>Pégalo en el reembolso de esta orden</em></div>' +
+          '<button class="copy" data-copy="' + id + '">Copiar</button></div>' +
+          '<pre id="' + id + '">' + esc(text) + '</pre>';
+        out.appendChild(box);
+      });
+
+      wireCopy(out);
+      head.scrollIntoView({behavior:'smooth', block:'start'});
+    });
+
+    document.getElementById('wipe').addEventListener('click', function(){
+      if (!confirm('¿Borrar todos los datos que escribiste?')) return;
+      inputs.forEach(function(el){ el.value = ''; });
+      try { localStorage.removeItem(KEY); } catch(e){}
+      document.getElementById('out').innerHTML = '';
+    });
+  })();
+</script>
