@@ -17,6 +17,8 @@ import { logger } from "./logger.js";
 const ACCOUNT_SID = config.twilio.account_sid;
 const API_KEY_SID = config.twilio.api_key_sid;
 const API_KEY_SECRET = config.twilio.api_key_secret;
+import * as cloud from "./whatsapp_cloud.js";
+
 const FROM = `whatsapp:${config.twilio.whatsapp_number}`; // remitente por defecto (número primario)
 
 // MULTI-NÚMERO: el bot puede atender varios números de WhatsApp con un solo
@@ -24,6 +26,22 @@ const FROM = `whatsapp:${config.twilio.whatsapp_number}`; // remitente por defec
 // llegó el mensaje (el campo "To" de Twilio) para responderle a la clienta desde
 // ESE mismo número. Fuera de un webhook (pollers, avisos) se usa el primario.
 export const botNumberContext = new AsyncLocalStorage();
+
+// ─── DOS CANALES, UN SOLO CEREBRO ───────────────────────────────
+// Winny tiene su número propio (849-545-3394) conectado DIRECTO a Meta
+// por Coexistencia: sigue usando WhatsApp normal en el celular y el bot
+// contesta en ese mismo número por la Cloud API. El canal viejo de
+// Twilio sigue aquí intacto.
+//
+// Cuál se usa lo dice el contexto del mensaje entrante (canal: "cloud").
+// Así los once archivos que ya importan este módulo no cambian nada:
+// siguen llamando send_text() y el mensaje sale por donde debe.
+export function canal_actual() {
+  return botNumberContext.getStore()?.canal || "twilio";
+}
+function es_cloud() {
+  return canal_actual() === "cloud" && cloud.cloud_enabled();
+}
 function current_from() {
   const store = botNumberContext.getStore();
   const n = store?.from;
@@ -80,6 +98,7 @@ async function post_message(params) {
 
 // ─── Enviar mensaje de texto ────────────────────────────────────
 export async function send_text(to, body) {
+  if (es_cloud()) return cloud.send_text(to, body);
   return post_message({ To: wa(to), Body: body });
 }
 
@@ -87,6 +106,7 @@ export async function send_text(to, body) {
 // Para mensajes FUERA de la ventana de 24h (Meta exige plantilla aprobada).
 // `variables` = objeto {"1":"valor","2":"valor"} con las variables de la plantilla.
 export async function send_wa_template(to, content_sid, variables = {}) {
+  if (es_cloud()) return cloud.send_wa_template(to, content_sid, variables);
   return post_message({
     To: wa(to),
     ContentSid: content_sid,
@@ -98,6 +118,7 @@ export async function send_wa_template(to, content_sid, variables = {}) {
 //     Para un bot conversacional con IA usamos texto plano: degradamos
 //     los botones a una lista numerada dentro del mismo mensaje.
 export async function send_buttons(to, body, buttons) {
+  if (es_cloud()) return cloud.send_buttons(to, body, buttons);
   const opciones = (buttons || [])
     .slice(0, 3)
     .map((b, i) => `${i + 1}. ${b.title}`)
@@ -108,6 +129,7 @@ export async function send_buttons(to, body, buttons) {
 
 // ─── Lista → mismo enfoque: texto plano numerado ────────────────
 export async function send_list(to, body, _button_label, sections) {
+  if (es_cloud()) return cloud.send_list(to, body, _button_label, sections);
   const filas = (sections || [])
     .flatMap(s => s.rows || [])
     .map((r, i) => `${i + 1}. ${r.title}${r.description ? ` — ${r.description}` : ""}`)
@@ -122,6 +144,7 @@ export async function send_list(to, body, _button_label, sections) {
 // (reenvío de comprobante), no podemos servirla públicamente desde aquí,
 // así que mandamos solo el caption como texto y dejamos la nota.
 export async function send_image(to, image_url_or_path, caption = "") {
+  if (es_cloud()) return cloud.send_image(to, image_url_or_path, caption);
   if (image_url_or_path && image_url_or_path.startsWith("http")) {
     return post_message({ To: wa(to), Body: caption || "", MediaUrl: image_url_or_path });
   }
@@ -132,12 +155,20 @@ export async function send_image(to, image_url_or_path, caption = "") {
 
 // ─── Marcar leído / typing: Twilio no expone estas acciones ─────
 //     Las dejamos como no-ops para mantener compatibilidad.
-export async function mark_read(_message_id) { /* no-op en Twilio */ }
-export async function send_typing(_message_id) { /* no-op en Twilio */ }
+export async function mark_read(message_id) {
+  if (es_cloud()) return cloud.mark_read(message_id);
+  /* Twilio no expone marcar como leído */
+}
+export async function send_typing(message_id) {
+  // En Cloud API esto SÍ muestra los tres puntitos a la clienta.
+  if (es_cloud()) return cloud.send_typing(message_id);
+  /* Twilio no expone "escribiendo..." */
+}
 
 // ─── Descargar media entrante (foto de comprobante, etc.) ───────
 // En el webhook de Twilio llega MediaUrl0; la descargamos con Basic Auth.
 export async function download_media(media_url, save_to) {
+  if (es_cloud()) return cloud.download_media(media_url, save_to);
   if (!media_url) {
     logger.error("download_media sin URL");
     return null;
@@ -172,6 +203,7 @@ export async function download_media(media_url, save_to) {
 //     fallback de notificar a Winny por texto (el comprobante queda
 //     guardado en el servidor de todas formas).
 export async function upload_media(_file_path, _mime_type) {
+  if (es_cloud()) return cloud.upload_media(_file_path, _mime_type);
   return null;
 }
 

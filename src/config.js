@@ -87,6 +87,21 @@ export const config = {
 
   // Instagram (Meta directo) — el bot responde DMs de IG con el mismo cerebro.
   // Se activa solo si hay IG_TOKEN. El webhook de verificación funciona igual sin token.
+  // WhatsApp Cloud API (Meta directo) — el canal OFICIAL para el número
+  // propio de Winny, conectado por Coexistencia: ella sigue usando la app
+  // de WhatsApp Business en su celular y el bot contesta en ese MISMO
+  // número. Sin riesgo de bloqueo, porque no imita a WhatsApp Web.
+  //
+  // Vacío = canal apagado y el bot sigue hablando sólo por Twilio.
+  wa_cloud: {
+    phone_number_id: optional("WA_PHONE_NUMBER_ID", ""),   // de Meta: API Setup
+    waba_id: optional("WA_BUSINESS_ACCOUNT_ID", ""),       // de Meta: WhatsApp Business Account ID
+    token: optional("WA_CLOUD_TOKEN", ""),                 // token permanente (System User)
+    verify_token: optional("WA_VERIFY_TOKEN", "winny-wa-2026"), // el que se escribe en Meta al poner el webhook
+    app_secret: optional("WA_APP_SECRET", ""),             // (opcional) para verificar la firma del webhook
+    graph_version: optional("WA_GRAPH_VERSION", "v21.0")   // misma versión que ya usa Instagram
+  },
+
   instagram: {
     token: optional("IG_TOKEN", ""),                      // access token de la página/IG (enviar mensajes)
     verify_token: optional("IG_VERIFY_TOKEN", "winny-ig-2026"), // token para verificar el webhook en Meta

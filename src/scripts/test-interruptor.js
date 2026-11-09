@@ -1,0 +1,11 @@
+process.env.DB_PATH = process.env.DB_PATH || "./data/prueba-interruptor.db";
+const I = await import("../interruptor.js");
+const ok=(n,c)=>console.log(`${c?"✅":"❌"}  ${n}`);
+ok("Arranca APAGADA (hay que encenderla a mano)", I.ia_encendida() === false);
+ok("Marca que nunca se ha tocado", I.estado_ia().nunca_tocado === true);
+I.poner_ia(true, "Winny");
+ok("Se enciende", I.ia_encendida() === true);
+ok("Guarda quién la cambió", I.estado_ia().por === "Winny");
+I.poner_ia(false, "Winny");
+ok("Se apaga", I.ia_encendida() === false);
+ok("Ya no dice 'nunca tocado'", I.estado_ia().nunca_tocado === false);

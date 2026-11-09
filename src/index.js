@@ -15,6 +15,11 @@ import { parse_incoming, botNumberContext } from "./whatsapp.js";
 import { handle_incoming } from "./handlers/messages.js";
 import { setup_voice_ws } from "./voice.js";
 import { verify_webhook as ig_verify, handle_ig_event, ig_enabled } from "./instagram.js";
+import { parse_cloud, verify_webhook as wa_verify, cloud_enabled } from "./whatsapp_cloud.js";
+import { send_typing } from "./whatsapp.js";
+import * as antiban from "./antiban.js";
+import { ia_encendida } from "./interruptor.js";
+import { notificar } from "./push.js";
 import { mount_admin } from "./admin.js";
 import { start_shipping_poller } from "./shipping_poller.js";
 import { start_improve_poller } from "./improve_poller.js";
@@ -170,6 +175,97 @@ app.get("/instagram/webhook", (req, res) => {
   if (r.ok) return res.status(200).send(String(r.challenge));
   return res.sendStatus(403);
 });
+// ═══════════════════════════════════════════════════════════════
+// WHATSAPP CLOUD API (Meta directo) — el número propio de Winny
+//
+// Su número está conectado DIRECTO a Meta por Coexistencia: ella sigue
+// usando WhatsApp normal en el celular y el bot contesta en ese mismo
+// número. Canal oficial, así que no hay riesgo de que la bloqueen.
+//
+// Este canal NO tiene el corte duro del webhook de Twilio: es nuevo y
+// se enciende solo cuando el .env trae las credenciales de Meta. Sin
+// credenciales, cloud_enabled() es false y aquí no pasa nada.
+//
+// Todo mensaje entrante pasa primero por las reglas anti-bloqueo de
+// antiban.js antes de que el bot piense siquiera en responder.
+// ═══════════════════════════════════════════════════════════════
+app.get("/wa/webhook", (req, res) => {
+  const r = wa_verify(req.query);
+  if (r.ok) return res.status(200).send(String(r.challenge));
+  return res.sendStatus(403);
+});
+
+app.post("/wa/webhook", (req, res) => {
+  res.sendStatus(200); // responder rápido para que Meta no reintente
+
+  if (!cloud_enabled()) {
+    logger.debug("Cloud API sin credenciales — evento ignorado");
+    return;
+  }
+
+  let mensajes = [];
+  try {
+    mensajes = parse_cloud(req.body);
+  } catch (err) {
+    logger.error({ err: err.message }, "Error leyendo el webhook de Meta");
+    return;
+  }
+  if (!mensajes.length) return; // acuses de entrega y demás: no son mensajes
+
+  for (const parsed of mensajes) {
+    const texto = parsed.text || parsed.caption || "";
+    logger.info({
+      from: parsed.from, type: parsed.type, text_preview: texto.slice(0, 50)
+    }, "📨 Mensaje recibido (Meta)");
+
+    // ─── El interruptor de Winny manda sobre todo lo demás ───
+    // Si la IA está apagada, el mensaje se guarda igual (ella lo ve en
+    // el panel y contesta a mano), pero el bot no responde.
+    const guard = ia_encendida()
+      ? antiban.revisar(parsed.from, texto, parsed.id, true)
+      : { permitido: false, motivo: "ia_apagada" };
+    if (!guard.permitido) {
+      logger.warn({ from: parsed.from, motivo: guard.motivo }, "🤐 El bot no responde a este mensaje");
+      if (guard.avisar_a_winny) {
+        notificar({
+          titulo: "Una clienta pide hablar contigo",
+          cuerpo: `${parsed.profile_name || parsed.from}: ${texto.slice(0, 80)}`,
+          url: "/panel/chat"
+        }).catch(() => {});
+      }
+      // Aunque el bot se calle, el mensaje tiene que quedar guardado para
+      // que Winny lo vea en el panel y no pierda la clienta.
+      (async () => {
+        try {
+          const { upsert_contact, save_message } = await import("./db.js");
+          upsert_contact(parsed.from, parsed.profile_name || null);
+          save_message({
+            phone: parsed.from, direction: "in", type: parsed.type,
+            content: texto, wa_message_id: parsed.id
+          });
+        } catch (e) {
+          logger.error({ err: e?.message }, "No se pudo guardar el mensaje silenciado");
+        }
+      })();
+      continue;
+    }
+
+    const contact_profile = parsed.profile_name ? { name: parsed.profile_name } : null;
+
+    botNumberContext.run({ from: parsed.to, canal: "cloud", message_id: parsed.id }, () => {
+      (async () => {
+        // Espera de 5 a 20 segundos mostrando "escribiendo..." — en este
+        // canal los tres puntitos SÍ le llegan a la clienta.
+        await antiban.espera_humana(() => send_typing(parsed.id));
+        await handle_incoming(parsed, contact_profile);
+        guard.confirmar(); // la cuota se gasta sólo si llegó hasta aquí
+      })().catch(err => {
+        logger.error({ err: err.message, from: parsed.from }, "Error procesando mensaje (Meta)");
+      });
+    });
+  }
+});
+
 app.post("/instagram/webhook", (req, res) => {
   res.sendStatus(200); // responder rápido para que Meta no reintente
   // ═══ BOT DESCONECTADO TAMBIÉN EN INSTAGRAM (Winny, 2026-09-01) ═══
