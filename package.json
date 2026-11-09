@@ -11,7 +11,8 @@
     "test-claude": "node src/scripts/test-claude.js",
     "test-antiban": "node src/scripts/test-antiban.js",
     "test-cloud": "node src/scripts/test-cloud.js",
-    "test-frases": "node src/scripts/test-frases.js"
+    "test-frases": "node src/scripts/test-frases.js",
+    "test-interruptor": "node src/scripts/test-interruptor.js"
   },
   "engines": {
     "node": ">=20.0.0"

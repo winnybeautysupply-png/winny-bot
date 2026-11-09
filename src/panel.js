@@ -21,6 +21,8 @@ import db, {
   set_handoff, clear_handoff, is_handed_off, mark_human_reply, get_open_orders, set_shipping
 } from "./db.js";
 import { send_text, send_image } from "./whatsapp.js";
+import { estado_ia, poner_ia } from "./interruptor.js";
+import { resumen_cuota } from "./antiban.js";
 import { find_products, get_offers, get_by_code, get_catalog } from "./catalog.js";
 import {
   todo_el_stock, mover, ajustar, resumen_inventario, por_acabarse, existencia, olvidar
@@ -314,6 +316,7 @@ function shell(title, inner, { key = "", role = "", nombre = "", activa = "", pe
       ${role === "jefa" ? `<a class="${activa === "campanas" ? "on" : ""}" href="/panel/campanas?key=${k}">📣 Campañas</a>` : ""}
       ${role === "jefa" ? `<a class="${activa === "equipo" ? "on" : ""}" href="/panel/equipo?key=${k}">👥 Equipo</a>` : ""}
       ${role === "jefa" ? `<a class="${activa === "pedidos" ? "on" : ""}" href="/panel/pedidos?key=${k}">🧾 Pedidos</a>` : ""}
+      ${role === "jefa" ? `<a class="${activa === "ia" ? "on" : ""}" href="/panel/ia?key=${k}">🤖 IA</a>` : ""}
       ${role === "jefa" ? `<a class="${activa === "respaldo" ? "on" : ""}" href="/panel/respaldo?key=${k}">💾 Respaldo</a>` : ""}
       <a class="${activa === "app" ? "on" : ""}" href="/panel/app?key=${k}">📲 App</a>
       <a href="/panel/salir">🚪 Salir</a>
@@ -2445,6 +2448,74 @@ self.addEventListener("notificationclick", function (e) {
   });
 
   // ── RESPALDO (solo jefa) ──
+  // ─── Interruptor de la IA ───────────────────────────────────
+  // Un botón grande y claro. Apagar la IA NO apaga el bot: los
+  // mensajes siguen entrando y guardándose; sólo deja de contestar solo.
+  app.get("/panel/ia", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    const k = encodeURIComponent(g.key);
+    const st = estado_ia();
+    const cuota = resumen_cuota();
+    const ok = req.query.ok ? `<p class="ok">${esc(String(req.query.ok))}</p>` : "";
+    const cuando = st.cambiado_en
+      ? new Date(st.cambiado_en).toLocaleString("es-DO", { dateStyle: "medium", timeStyle: "short" })
+      : null;
+
+    const inner = `
+      <h1>🤖 Respuestas automáticas</h1>
+      ${ok}
+      <div class="card" style="text-align:center;padding:24px">
+        <p style="font-size:42px;margin:0">${st.encendida ? "🟢" : "🔴"}</p>
+        <p style="font-size:20px;font-weight:700;margin:6px 0">
+          La IA está ${st.encendida ? "ENCENDIDA" : "APAGADA"}
+        </p>
+        <p class="muted" style="margin-top:0">
+          ${st.encendida
+            ? "El bot le contesta solo a las clientas."
+            : "El bot recibe y guarda los mensajes, pero no contesta. Tú contestas desde la Bandeja."}
+        </p>
+        <form method="post" action="/panel/ia?key=${k}" style="margin-top:16px">
+          <input type="hidden" name="encender" value="${st.encendida ? "no" : "si"}">
+          <button class="${st.encendida ? "grey big" : "big"}" style="font-size:18px;padding:14px 28px">
+            ${st.encendida ? "🔴 Apagar la IA" : "🟢 Encender la IA"}
+          </button>
+        </form>
+        ${cuando ? `<p class="muted" style="margin-top:14px;font-size:13px">Último cambio: ${esc(cuando)}${st.por ? " · " + esc(st.por) : ""}</p>` : ""}
+      </div>
+
+      <div class="card">
+        <h3>Consumo de este mes</h3>
+        <p>Respuestas automáticas hoy: <b>${cuota.hoy}</b> de ${cuota.max_dia}</p>
+        <p>Este mes: <b>${cuota.mes}</b> · Meta regala ${cuota.gratis_al_mes} al mes</p>
+        <p>${cuota.pagando
+            ? "💸 Ya pasaste los gratis de este mes: Meta está cobrando."
+            : `✅ Te quedan <b>${cuota.gratis_restantes}</b> mensajes gratis este mes.`}</p>
+      </div>
+
+      <div class="card">
+        <h3>Para tener claro</h3>
+        <p class="muted">Apagar la IA <b>no apaga el bot</b>. Las clientas te siguen escribiendo
+        y sus mensajes aparecen en la Bandeja igual que siempre — lo único que se apaga son las
+        respuestas automáticas. No pierdes ninguna clienta.</p>
+        <p class="muted">Aunque la IA esté encendida, el bot <b>siempre</b> se calla con quien
+        pida hablar contigo, y nunca le escribe primero a nadie.</p>
+      </div>
+    `;
+    res.send(shell("IA — Winny", inner, { key: g.key, role: g.role, nombre: g.nombre, activa: "ia" }));
+  });
+
+  app.post("/panel/ia", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    const encender = String((req.body || {}).encender) === "si";
+    poner_ia(encender, g.nombre || "panel");
+    const msg = encender
+      ? "IA encendida. El bot vuelve a contestar solo."
+      : "IA apagada. Los mensajes siguen llegando a la Bandeja.";
+    res.redirect(`/panel/ia?key=${encodeURIComponent(g.key)}&ok=${encodeURIComponent(msg)}`);
+  });
+
   app.get("/panel/respaldo", (req, res) => {
     const g = guard(req, res); if (!g) return;
     if (soloJefa(g, res)) return;

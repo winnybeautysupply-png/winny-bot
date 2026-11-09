@@ -18,6 +18,7 @@ import { verify_webhook as ig_verify, handle_ig_event, ig_enabled } from "./inst
 import { parse_cloud, verify_webhook as wa_verify, cloud_enabled } from "./whatsapp_cloud.js";
 import { send_typing } from "./whatsapp.js";
 import * as antiban from "./antiban.js";
+import { ia_encendida } from "./interruptor.js";
 import { notificar } from "./push.js";
 import { mount_admin } from "./admin.js";
 import { start_shipping_poller } from "./shipping_poller.js";
@@ -217,8 +218,12 @@ app.post("/wa/webhook", (req, res) => {
       from: parsed.from, type: parsed.type, text_preview: texto.slice(0, 50)
     }, "📨 Mensaje recibido (Meta)");
 
-    // ─── Las reglas anti-bloqueo mandan ───
-    const guard = antiban.revisar(parsed.from, texto, parsed.id, true);
+    // ─── El interruptor de Winny manda sobre todo lo demás ───
+    // Si la IA está apagada, el mensaje se guarda igual (ella lo ve en
+    // el panel y contesta a mano), pero el bot no responde.
+    const guard = ia_encendida()
+      ? antiban.revisar(parsed.from, texto, parsed.id, true)
+      : { permitido: false, motivo: "ia_apagada" };
     if (!guard.permitido) {
       logger.warn({ from: parsed.from, motivo: guard.motivo }, "🤐 El bot no responde a este mensaje");
       if (guard.avisar_a_winny) {
