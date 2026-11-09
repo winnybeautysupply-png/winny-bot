@@ -41,6 +41,11 @@ function num(to) {
   return String(to || "").replace("whatsapp:", "").replace(/[^\d]/g, "");
 }
 
+// Los ids de media de Meta son numéricos y largos; una ruta de disco no lo es.
+export function es_media_id(v) {
+  return typeof v === "string" && /^\d{6,}$/.test(v);
+}
+
 async function fetch_timeout(url, options = {}, ms = 20000) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
@@ -159,6 +164,14 @@ export async function send_image(to, image_url_or_path, caption = "") {
     return post_message({
       to: num(to), type: "image",
       image: { link: image_url_or_path, ...(caption ? { caption } : {}) }
+    });
+  }
+  // Un id de media que ya está en los servidores de Meta (la foto que acaba
+  // de mandar la clienta). Se reenvía por id: ni se baja ni se vuelve a subir.
+  if (es_media_id(image_url_or_path)) {
+    return post_message({
+      to: num(to), type: "image",
+      image: { id: String(image_url_or_path), ...(caption ? { caption } : {}) }
     });
   }
   const media_id = await upload_media(image_url_or_path, "image/jpeg");
@@ -306,7 +319,12 @@ export function parse_cloud(body) {
           else if (m.audio) type = "audio";
           else if (m.video) type = "video";
           salida.push({ ...base, type,
-            media_id: media.id, mime: media.mime_type || "", caption: media.caption || "" });
+            media_id: media.id,
+            // messages.js (escrito para Twilio) lee parsed.media_url. En Cloud
+            // API no hay URL sino un id, así que se pone el id aquí también:
+            // download_media y send_image del canal cloud saben leerlo.
+            media_url: media.id,
+            mime: media.mime_type || "", caption: media.caption || "" });
           continue;
         }
 

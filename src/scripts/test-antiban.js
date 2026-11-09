@@ -76,3 +76,12 @@ ok("Resumen: avisa que ya está pagando", A.resumen_cuota().pagando === true);
 ok("Resumen: ya no quedan gratis", A.gratis_restantes() === 0);
 const r4 = A.revisar("18090000002","otra","m21");
 ok("Pasados los 1,000 el bot SIGUE contestando (no deja clientas colgadas)", r4.permitido === true);
+
+// ─── Regla 1 desde el webhook: la clienta nueva SÍ se atiende ───
+// Su mensaje todavía no está guardado (lo guarda handle_incoming),
+// pero nos acaba de escribir, así que la regla 1 ya está cumplida.
+upsert_contact("18090000009", null);
+ok("R1: clienta NUEVA se atiende si viene del webhook",
+   A.revisar("18090000009","hola, precios?","m30", true).permitido === true);
+ok("R1: fuera del webhook sigue bloqueada",
+   A.revisar("18090000009","hola","m31", false).permitido === false);

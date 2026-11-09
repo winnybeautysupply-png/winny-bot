@@ -37,8 +37,27 @@ const AVISA_AL = 0.8; // avisar al llegar al 80% de los gratis
 const ESPERA_MIN_MS = 5000;
 const ESPERA_MAX_MS = 20000;
 
-// Palabras con las que la clienta pide una persona de verdad.
-const PIDE_HUMANO = /\b(humano|humana|persona|asesora|asesor)\b/i;
+// La clienta pide una persona de verdad.
+//
+// OJO: no se puede buscar "humano" o "humana" sueltas. En este negocio
+// "peluca humana" y "cabello humano" son el producto estrella, así que
+// esa palabra aparece en casi toda conversación de venta. Buscarla sola
+// callaba al bot justo con las clientas que venían a comprar.
+//
+// Por eso se busca la INTENCIÓN (hablar con / pásame con / quiero una),
+// y "humano" sólo cuenta acompañado de un verbo de pedir atención.
+// "quiero" nunca se junta con humano/humana, porque "quiero una peluca
+// humana" es una venta, no una queja.
+const PIDE_HUMANO = new RegExp([
+  // "hablar con una persona", "me pasas con un humano", "que me atienda alguien"
+  "\\b(hablar|habla|hablo|comunicarme|comunicar|pasame|p[aá]same|pasas|pasar|atienda|atienda|atienden|atender)\\b[^.?!]{0,25}\\b(humano|humana|persona|asesora|asesor|alguien|agente|encargad[ao]|due[ñn]a|winny)\\b",
+  // "quiero una persona", "necesito un agente" — sin humano/humana a propósito
+  "\\b(quiero|necesito|dame|deme|d[eé]jame|p[oó]ngame|ponme|puedo)\\b[^.?!]{0,25}\\b(persona|asesora|asesor|agente|encargad[ao])\\b",
+  // "¿eres un bot?", "esto es un robot"
+  "\\b(eres|es|son|est[aá]s)\\b[^.?!]{0,12}\\b(bot|robot|m[aá]quina|inteligencia artificial)\\b",
+  // sola no es ambigua en este negocio
+  "\\basesora\\b"
+].join("|"), "i");
 
 // Enlaces de cualquier forma: http://, https://, www. y dominios sueltos
 // tipo "winnybeauty.com/oferta". El objetivo es el primer mensaje a un
@@ -200,11 +219,17 @@ export async function espera_humana(on_typing) {
 // cuota se suma al llamar confirmar(), es decir cuando el mensaje
 // salió de verdad, para no gastar cuota con respuestas que fallaron.
 // ═══════════════════════════════════════════════════════════════
-export function revisar(phone, texto, message_id) {
+// es_entrante=true cuando esto se llama desde el webhook, o sea con el
+// mensaje de la clienta en la mano. Ahí la regla 1 ya está cumplida por
+// definición: nos acaba de escribir. Consultar la base en ese momento
+// daría falso negativo, porque el mensaje todavía no se ha guardado —
+// lo guarda handle_incoming después. La regla sigue estricta para
+// cualquier otro que quiera mandar algo (pollers, campañas, avisos).
+export function revisar(phone, texto, message_id, es_entrante = false) {
   if (pidio_humano(phone, texto)) {
     return { permitido: false, motivo: "pidio_humano", avisar_a_winny: true };
   }
-  if (!escribio_primero(phone)) {
+  if (!es_entrante && !escribio_primero(phone)) {
     return { permitido: false, motivo: "no_escribio_primero" };
   }
   if (!queda_cuota()) {
