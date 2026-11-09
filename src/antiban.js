@@ -26,6 +26,14 @@ import { set_handoff } from "./db.js";
 import { logger } from "./logger.js";
 
 export const MAX_POR_DIA = 200;
+
+// Meta regala 1,000 mensajes de servicio por número y por mes. No se
+// acumulan: se reinician el día 1. A partir del 1,001 empieza a cobrar.
+// Esto NO bloquea al bot — sería peor dejar clientas sin contestar por
+// ahorrar centavos — pero deja el aviso en el log y en el panel para
+// que Winny sepa cuándo cruzó a terreno pagado.
+export const GRATIS_AL_MES = 1000;
+const AVISA_AL = 0.8; // avisar al llegar al 80% de los gratis
 const ESPERA_MIN_MS = 5000;
 const ESPERA_MAX_MS = 20000;
 
@@ -42,11 +50,20 @@ db.exec(`
     dia        TEXT PRIMARY KEY,
     enviadas   INTEGER NOT NULL DEFAULT 0
   );
+  CREATE TABLE IF NOT EXISTS antiban_mes (
+    mes        TEXT PRIMARY KEY,
+    enviadas   INTEGER NOT NULL DEFAULT 0
+  );
   CREATE TABLE IF NOT EXISTS antiban_contestados (
     message_id TEXT PRIMARY KEY,
     creado_en  INTEGER NOT NULL
   );
 `);
+
+function mes_actual() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
 
 function hoy() {
   // Fecha local del servidor. A Winny le importa el día de su negocio,
@@ -70,6 +87,43 @@ function sumar_envio() {
     INSERT INTO antiban_dia (dia, enviadas) VALUES (?, 1)
     ON CONFLICT(dia) DO UPDATE SET enviadas = enviadas + 1
   `).run(hoy());
+  db.prepare(`
+    INSERT INTO antiban_mes (mes, enviadas) VALUES (?, 1)
+    ON CONFLICT(mes) DO UPDATE SET enviadas = enviadas + 1
+  `).run(mes_actual());
+
+  // Aviso justo al cruzar cada frontera, una sola vez, no en cada mensaje.
+  const n = enviadas_mes();
+  if (n === Math.ceil(GRATIS_AL_MES * AVISA_AL)) {
+    logger.warn({ enviadas_mes: n, gratis: GRATIS_AL_MES },
+      `⚠️ Vas por ${n} de los ${GRATIS_AL_MES} mensajes gratis del mes`);
+  } else if (n === GRATIS_AL_MES + 1) {
+    logger.warn({ enviadas_mes: n },
+      `💸 Se acabaron los ${GRATIS_AL_MES} gratis del mes — desde aquí Meta cobra`);
+  }
+}
+
+// ─── Cuota mensual gratis de Meta ────────────────────────────────
+export function enviadas_mes() {
+  const row = db.prepare("SELECT enviadas FROM antiban_mes WHERE mes = ?").get(mes_actual());
+  return row ? row.enviadas : 0;
+}
+
+export function gratis_restantes() {
+  return Math.max(0, GRATIS_AL_MES - enviadas_mes());
+}
+
+// Resumen para el panel: cuánto va del día, del mes, y si ya se paga.
+export function resumen_cuota() {
+  const mes = enviadas_mes();
+  return {
+    hoy: enviadas_hoy(),
+    max_dia: MAX_POR_DIA,
+    mes,
+    gratis_al_mes: GRATIS_AL_MES,
+    gratis_restantes: gratis_restantes(),
+    pagando: mes > GRATIS_AL_MES
+  };
 }
 
 // ─── Regla 3: una sola respuesta por mensaje recibido ────────────

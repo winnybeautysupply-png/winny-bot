@@ -55,3 +55,24 @@ const r2 = A.revisar("18090000002","otra cosa","m10");
 ok("R4: no gasta cuota hasta que el mensaje sale", A.enviadas_hoy() === antes);
 r2.confirmar();
 ok("R4: suma al confirmar el envío", A.enviadas_hoy() === antes + 1);
+
+// ─── Cuota mensual gratis de Meta (1,000 por número) ────────────
+const m0 = A.enviadas_mes();
+ok("Mes: arranca contando desde donde iba", typeof m0 === "number");
+const r3 = A.revisar("18090000002","una mas","m20"); r3.confirmar();
+ok("Mes: suma al confirmar", A.enviadas_mes() === m0 + 1);
+ok("Mes: calcula cuántos gratis quedan",
+   A.gratis_restantes() === A.GRATIS_AL_MES - A.enviadas_mes());
+
+const res = A.resumen_cuota();
+ok("Resumen: trae día, mes y si ya se paga",
+   res.hoy >= 0 && res.mes >= 1 && res.pagando === false && res.gratis_al_mes === 1000);
+
+// Simular que ya se pasó de los 1,000
+const dm = new Date(); const mes = `${dm.getFullYear()}-${String(dm.getMonth()+1).padStart(2,"0")}`;
+db.prepare("INSERT INTO antiban_mes (mes,enviadas) VALUES (?,?) ON CONFLICT(mes) DO UPDATE SET enviadas=excluded.enviadas")
+  .run(mes, A.GRATIS_AL_MES + 50);
+ok("Resumen: avisa que ya está pagando", A.resumen_cuota().pagando === true);
+ok("Resumen: ya no quedan gratis", A.gratis_restantes() === 0);
+const r4 = A.revisar("18090000002","otra","m21");
+ok("Pasados los 1,000 el bot SIGUE contestando (no deja clientas colgadas)", r4.permitido === true);
