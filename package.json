@@ -12,7 +12,8 @@
     "test-antiban": "node src/scripts/test-antiban.js",
     "test-cloud": "node src/scripts/test-cloud.js",
     "test-frases": "node src/scripts/test-frases.js",
-    "test-interruptor": "node src/scripts/test-interruptor.js"
+    "test-interruptor": "node src/scripts/test-interruptor.js",
+    "test-waconfig": "node src/scripts/test-waconfig.js"
   },
   "engines": {
     "node": ">=20.0.0"

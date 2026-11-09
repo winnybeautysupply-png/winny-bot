@@ -36,32 +36,33 @@ Ahí copia tres cosas:
 
 ### Dónde se pegan
 
-En **Render** (donde vive el bot) → tu servicio → **Environment** →
-agrega estas líneas:
+**En tu propio panel. No hace falta tocar Render ni nada técnico.**
 
-```
-WA_PHONE_NUMBER_ID=         ← el primero
-WA_BUSINESS_ACCOUNT_ID=     ← el segundo
-WA_CLOUD_TOKEN=             ← el token
-WA_VERIFY_TOKEN=winny-wa-2026
-```
+1. Abre tu panel
+2. Toca la pestaña **🤖 IA**
+3. Arriba sale **"🔌 Conexión con Meta"** con tres cajitas
+4. Pega cada dato y toca **Guardar**
 
-> ⚠️ **El token es como la llave de tu negocio.** No lo mandes por WhatsApp,
-> ni por chat, ni se lo pases a nadie. Va directo de Meta a Render.
+Puedes llenarlas de a una. Lo que dejes vacío **no se borra**, así que
+puedes pegar un dato hoy y otro mañana.
 
-Guarda y espera a que el bot se reinicie solo (unos minutos).
+El bot los toma al instante — no hay que reiniciar nada.
 
----
+> ⚠️ **El token es como la llave de tu negocio.** Pégalo sólo en tu
+> panel. No lo mandes por WhatsApp ni se lo pases a nadie.
 
 ## 2. Avisarle a Meta dónde está el bot
 
-En Meta, en la misma sección de la API, busca **Webhook** o **Configuración
-del webhook** y pon:
+En tu panel, pestaña **🤖 IA**, hay un recuadro que dice
+**"📋 Lo que hay que pegar en Meta"** con los dos datos exactos, ya
+escritos para ti. Cópialos de ahí.
 
-| Campo | Qué poner |
+En Meta, en la configuración del webhook de WhatsApp, pega:
+
+| Campo | De dónde sale |
 |---|---|
-| **URL de devolución** | `https://TU-BOT.onrender.com/wa/webhook` |
-| **Token de verificación** | `winny-wa-2026` |
+| **URL de devolución** | del recuadro de tu panel |
+| **Token de verificación** | del recuadro de tu panel |
 
 Después marca la casilla **messages** para que Meta te mande los mensajes.
 

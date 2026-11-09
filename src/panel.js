@@ -22,6 +22,7 @@ import db, {
 } from "./db.js";
 import { send_text, send_image } from "./whatsapp.js";
 import { estado_ia, poner_ia } from "./interruptor.js";
+import { wa_estado, wa_guardar, wa_borrar } from "./wa_config.js";
 import { resumen_cuota } from "./antiban.js";
 import { find_products, get_offers, get_by_code, get_catalog } from "./catalog.js";
 import {
@@ -2462,9 +2463,44 @@ self.addEventListener("notificationclick", function (e) {
       ? new Date(st.cambiado_en).toLocaleString("es-DO", { dateStyle: "medium", timeStyle: "short" })
       : null;
 
+    const wa = wa_estado();
+    const proto = (req.headers["x-forwarded-proto"] || req.protocol || "https").split(",")[0];
+    const webhook = `${proto}://${req.get("host")}/wa/webhook`;
+
+    const bloque_conexion = `
+      <div class="card">
+        <h3>🔌 Conexión con Meta</h3>
+        ${wa.listo
+          ? `<p class="ok">✅ Conectado. El bot puede contestar por WhatsApp.</p>`
+          : `<p class="muted">Pega aquí los datos que te da Meta. <b>No hace falta tocar Render ni nada técnico.</b> Puedes llenarlos de a uno; lo que dejes vacío no se borra.</p>`}
+
+        <form method="post" action="/panel/conexion?key=${k}">
+          <label style="display:block;margin:10px 0 4px;font-weight:700;font-size:.9rem">Phone number ID <span class="muted">(un número largo, NO tu teléfono)</span></label>
+          <input type="text" name="phone_number_id" value="${esc(wa.phone_number_id)}" placeholder="ej: 123456789012345">
+
+          <label style="display:block;margin:10px 0 4px;font-weight:700;font-size:.9rem">WhatsApp Business Account ID</label>
+          <input type="text" name="waba_id" value="${esc(wa.waba_id)}" placeholder="ej: 1136998529079088">
+
+          <label style="display:block;margin:10px 0 4px;font-weight:700;font-size:.9rem">Token permanente ${wa.tiene_token ? `<span class="muted">— guardado: ${esc(wa.token_tapado)}</span>` : ""}</label>
+          <input name="token" type="password" placeholder="${wa.tiene_token ? "déjalo vacío para no cambiarlo" : "pega aquí el token de Meta"}" autocomplete="off">
+
+          <button class="big" style="margin-top:10px">Guardar</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h3>📋 Lo que hay que pegar en Meta</h3>
+        <p class="muted">En Meta, en la configuración del webhook de WhatsApp, pon estos dos:</p>
+        <p><b>URL:</b><br><code style="word-break:break-all">${esc(webhook)}</code></p>
+        <p><b>Token de verificación:</b><br><code>${esc(wa.verify_token)}</code></p>
+        <p class="muted">Y marca la casilla que dice <b>messages</b>.</p>
+      </div>
+    `;
+
     const inner = `
       <h1>🤖 Respuestas automáticas</h1>
       ${ok}
+      ${bloque_conexion}
       <div class="card" style="text-align:center;padding:24px">
         <p style="font-size:42px;margin:0">${st.encendida ? "🟢" : "🔴"}</p>
         <p style="font-size:20px;font-weight:700;margin:6px 0">
@@ -2503,6 +2539,21 @@ self.addEventListener("notificationclick", function (e) {
       </div>
     `;
     res.send(shell("IA — Winny", inner, { key: g.key, role: g.role, nombre: g.nombre, activa: "ia" }));
+  });
+
+  app.post("/panel/conexion", (req, res) => {
+    const g = guard(req, res); if (!g) return;
+    if (soloJefa(g, res)) return;
+    const b = req.body || {};
+    const puestos = wa_guardar({
+      phone_number_id: b.phone_number_id,
+      waba_id: b.waba_id,
+      token: b.token
+    }, g.nombre || "panel");
+    const msg = puestos.length
+      ? `Guardado: ${puestos.length} dato${puestos.length > 1 ? "s" : ""}.`
+      : "No escribiste nada, no cambié nada.";
+    res.redirect(`/panel/ia?key=${encodeURIComponent(g.key)}&ok=${encodeURIComponent(msg)}`);
   });
 
   app.post("/panel/ia", (req, res) => {

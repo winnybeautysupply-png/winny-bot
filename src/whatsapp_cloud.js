@@ -20,20 +20,23 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { config } from "./config.js";
 import { logger } from "./logger.js";
+import { wa_cfg } from "./wa_config.js";
 
-const C = config.wa_cloud;
-const GRAPH = `https://graph.facebook.com/${C.graph_version}`;
+// Los datos se leen en cada llamada, no al arrancar: así, cuando Winny
+// los pega en el panel, el bot los toma de una vez sin reiniciar nada.
+function C() { return wa_cfg(); }
+function GRAPH() { return `https://graph.facebook.com/${C().graph_version}`; }
 
-// El canal está apagado mientras no haya credenciales en el .env.
-// Así el bot sigue funcionando por Twilio sin tocar nada.
+// El canal está apagado mientras no haya credenciales. Así el bot sigue
+// funcionando por Twilio sin tocar nada.
 export function cloud_enabled() {
-  return Boolean(C.phone_number_id && C.token);
+  const c = C();
+  return Boolean(c.phone_number_id && c.token);
 }
 
 function auth_headers(extra = {}) {
-  return { "Authorization": `Bearer ${C.token}`, ...extra };
+  return { "Authorization": `Bearer ${C().token}`, ...extra };
 }
 
 // Meta quiere el número en formato internacional SIN "+" ni "whatsapp:".
@@ -62,7 +65,7 @@ async function post_message(payload) {
     logger.warn("WhatsApp Cloud API sin credenciales — mensaje no enviado");
     return null;
   }
-  const url = `${GRAPH}/${C.phone_number_id}/messages`;
+  const url = `${GRAPH()}/${C().phone_number_id}/messages`;
   try {
     const res = await fetch_timeout(url, {
       method: "POST",
@@ -214,7 +217,7 @@ export async function upload_media(file_path, mime_type = "application/octet-str
     form.append("messaging_product", "whatsapp");
     form.append("type", mime_type);
     form.append("file", new Blob([buf], { type: mime_type }), path.basename(file_path));
-    const res = await fetch_timeout(`${GRAPH}/${C.phone_number_id}/media`, {
+    const res = await fetch_timeout(`${GRAPH()}/${C().phone_number_id}/media`, {
       method: "POST", headers: auth_headers(), body: form
     }, 60000);
     const data = await res.json().catch(() => ({}));
@@ -235,7 +238,7 @@ export async function upload_media(file_path, mime_type = "application/octet-str
 export async function download_media(media_id, save_to) {
   if (!cloud_enabled() || !media_id) return null;
   try {
-    const meta_res = await fetch_timeout(`${GRAPH}/${media_id}`, { headers: auth_headers() });
+    const meta_res = await fetch_timeout(`${GRAPH()}/${media_id}`, { headers: auth_headers() });
     const meta = await meta_res.json().catch(() => ({}));
     if (!meta_res.ok || !meta.url) {
       logger.error({ err: meta?.error || meta, media_id }, "No se pudo pedir la URL del media");
@@ -261,7 +264,7 @@ export function verify_webhook(query) {
   const mode = query["hub.mode"];
   const token = query["hub.verify_token"];
   const challenge = query["hub.challenge"];
-  if (mode === "subscribe" && token === C.verify_token) return { ok: true, challenge };
+  if (mode === "subscribe" && token === C().verify_token) return { ok: true, challenge };
   logger.warn({ mode }, "Verificación del webhook de WhatsApp rechazada");
   return { ok: false };
 }
