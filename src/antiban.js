@@ -1,0 +1,164 @@
+// ═══════════════════════════════════════════════════════════════
+// REGLAS ANTI-BLOQUEO — los frenos del bot cuando habla por WAHA
+// (el número propio de Winny, conectado por QR).
+//
+// Conectar el WhatsApp de siempre por QR va contra los términos de
+// Meta y el número se puede perder. Estas reglas no eliminan ese
+// riesgo: lo bajan. Son las que Winny pidió, y están aquí como
+// frenos duros y no como opciones, para que nadie las pueda apagar
+// por descuido desde una variable de entorno.
+//
+// Las seis:
+//   1. Solo se le responde a quien escribió primero. Nunca iniciar.
+//   2. Esperar entre 5 y 20 segundos al azar, mostrando "escribiendo...".
+//   3. Una sola respuesta automática por mensaje recibido.
+//   4. Máximo 200 respuestas automáticas por día.
+//   5. "humano", "persona" o "asesora" → el bot se calla y avisa a Winny.
+//   6. Sin enlaces en el primer mensaje a un contacto nuevo.
+//
+// El contador del día y la lista de mensajes ya contestados viven en
+// la misma base SQLite que el resto, así que sobreviven a un
+// reinicio: si el bot se cae y vuelve, no se le reinicia la cuota.
+// ═══════════════════════════════════════════════════════════════
+
+import db from "./db.js";
+import { set_handoff } from "./db.js";
+import { logger } from "./logger.js";
+
+export const MAX_POR_DIA = 200;
+const ESPERA_MIN_MS = 5000;
+const ESPERA_MAX_MS = 20000;
+
+// Palabras con las que la clienta pide una persona de verdad.
+const PIDE_HUMANO = /\b(humano|humana|persona|asesora|asesor)\b/i;
+
+// Enlaces de cualquier forma: http://, https://, www. y dominios sueltos
+// tipo "winnybeauty.com/oferta". El objetivo es el primer mensaje a un
+// contacto nuevo, que es donde Meta más castiga.
+const ENLACE = /(https?:\/\/\S+|www\.\S+|\b[a-z0-9-]+\.(com|net|org|do|io|me|link|shop|store|app)\b\S*)/gi;
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS antiban_dia (
+    dia        TEXT PRIMARY KEY,
+    enviadas   INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE TABLE IF NOT EXISTS antiban_contestados (
+    message_id TEXT PRIMARY KEY,
+    creado_en  INTEGER NOT NULL
+  );
+`);
+
+function hoy() {
+  // Fecha local del servidor. A Winny le importa el día de su negocio,
+  // no el UTC, así que se usa la hora local y no toISOString().
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// ─── Regla 4: cuota diaria ───────────────────────────────────────
+export function enviadas_hoy() {
+  const row = db.prepare("SELECT enviadas FROM antiban_dia WHERE dia = ?").get(hoy());
+  return row ? row.enviadas : 0;
+}
+
+export function queda_cuota() {
+  return enviadas_hoy() < MAX_POR_DIA;
+}
+
+function sumar_envio() {
+  db.prepare(`
+    INSERT INTO antiban_dia (dia, enviadas) VALUES (?, 1)
+    ON CONFLICT(dia) DO UPDATE SET enviadas = enviadas + 1
+  `).run(hoy());
+}
+
+// ─── Regla 3: una sola respuesta por mensaje recibido ────────────
+// Se marca ANTES de contestar, no después: si dos webhooks del mismo
+// mensaje llegan a la vez (WhatsApp reintenta), el segundo encuentra
+// la fila ya puesta y se va sin responder.
+function reservar_mensaje(message_id) {
+  if (!message_id) return true; // sin id no se puede deduplicar; se deja pasar
+  try {
+    db.prepare("INSERT INTO antiban_contestados (message_id, creado_en) VALUES (?, ?)")
+      .run(message_id, Date.now());
+    return true;
+  } catch {
+    return false; // ya existía → este mensaje ya se contestó
+  }
+}
+
+// ─── Regla 1: solo a quien escribió primero ──────────────────────
+export function escribio_primero(phone) {
+  const row = db.prepare(
+    "SELECT COUNT(*) AS n FROM messages WHERE phone = ? AND direction = 'in'"
+  ).get(phone);
+  return (row?.n || 0) > 0;
+}
+
+// ─── Regla 6: sin enlaces en el primer mensaje ───────────────────
+function es_contacto_nuevo(phone) {
+  const row = db.prepare(
+    "SELECT COUNT(*) AS n FROM messages WHERE phone = ? AND direction = 'out'"
+  ).get(phone);
+  return (row?.n || 0) === 0;
+}
+
+export function limpiar_enlaces(phone, texto) {
+  if (!texto || !es_contacto_nuevo(phone)) return texto;
+  if (!ENLACE.test(texto)) { ENLACE.lastIndex = 0; return texto; }
+  ENLACE.lastIndex = 0;
+  const limpio = texto.replace(ENLACE, "").replace(/\s{2,}/g, " ").trim();
+  logger.warn({ phone }, "🔗 Enlace quitado del primer mensaje a un contacto nuevo");
+  return limpio;
+}
+
+// ─── Regla 5: pide humano → el bot se calla ──────────────────────
+// Devuelve true si hay que callarse. Usa el handoff que ya existe en
+// el bot, así el panel lo ve igual que cualquier otra escalada.
+export function pidio_humano(phone, texto) {
+  if (!texto || !PIDE_HUMANO.test(texto)) return false;
+  set_handoff(phone, 24 * 60); // 24 horas callado en ese chat
+  logger.warn({ phone }, "🙋 La clienta pidió una persona — bot callado y aviso a Winny");
+  return true;
+}
+
+// ─── Regla 2: espera humana con "escribiendo..." ─────────────────
+// on_typing se llama al empezar la espera para que WAHA muestre el
+// "escribiendo..." mientras tanto. Si falla, la espera sigue igual:
+// el freno importa más que el adorno.
+export async function espera_humana(on_typing) {
+  const ms = ESPERA_MIN_MS + Math.floor(Math.random() * (ESPERA_MAX_MS - ESPERA_MIN_MS));
+  if (typeof on_typing === "function") {
+    try { await on_typing(ms); } catch (e) {
+      logger.debug({ err: e?.message }, "No se pudo mostrar 'escribiendo...'");
+    }
+  }
+  logger.debug({ ms }, "⏳ Espera humana antes de responder");
+  await new Promise(r => setTimeout(r, ms));
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PUERTA ÚNICA — todo mensaje entrante por WAHA pasa por aquí antes
+// de que el bot piense siquiera en responder.
+//
+// Devuelve { permitido: false, motivo } cuando hay que callarse, o
+// { permitido: true, confirmar() } cuando se puede responder. La
+// cuota se suma al llamar confirmar(), es decir cuando el mensaje
+// salió de verdad, para no gastar cuota con respuestas que fallaron.
+// ═══════════════════════════════════════════════════════════════
+export function revisar(phone, texto, message_id) {
+  if (pidio_humano(phone, texto)) {
+    return { permitido: false, motivo: "pidio_humano", avisar_a_winny: true };
+  }
+  if (!escribio_primero(phone)) {
+    return { permitido: false, motivo: "no_escribio_primero" };
+  }
+  if (!queda_cuota()) {
+    logger.warn({ enviadas: enviadas_hoy() }, `🛑 Tope de ${MAX_POR_DIA} respuestas automáticas del día`);
+    return { permitido: false, motivo: "cuota_diaria" };
+  }
+  if (!reservar_mensaje(message_id)) {
+    return { permitido: false, motivo: "ya_contestado" };
+  }
+  return { permitido: true, confirmar: sumar_envio };
+}
